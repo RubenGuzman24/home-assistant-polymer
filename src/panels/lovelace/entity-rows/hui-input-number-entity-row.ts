@@ -1,37 +1,32 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  property,
-  customElement,
-  css,
-  CSSResult,
-  PropertyValues,
-} from "lit-element";
-
-import "../components/hui-generic-entity-row";
+import type { PropertyValues } from "lit";
+import { LitElement, css, html, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { debounce } from "../../../common/util/debounce";
 import "../../../components/ha-slider";
-import "../components/hui-warning";
-
-import { computeRTLDirection } from "../../../common/util/compute_rtl";
-import { EntityRow, EntityConfig } from "./types";
-import { HomeAssistant } from "../../../types";
+import "../../../components/ha-textfield";
+import { isUnavailableState } from "../../../data/entity";
 import { setValue } from "../../../data/input_text";
+import type { HomeAssistant } from "../../../types";
 import { hasConfigOrEntityChanged } from "../common/has-changed";
+import "../components/hui-generic-entity-row";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { EntityConfig, LovelaceRow } from "./types";
 
 @customElement("hui-input-number-entity-row")
-class HuiInputNumberEntityRow extends LitElement implements EntityRow {
-  @property() public hass?: HomeAssistant;
+class HuiInputNumberEntityRow extends LitElement implements LovelaceRow {
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: EntityConfig;
+  @state() private _config?: EntityConfig;
 
   private _loaded?: boolean;
 
   private _updated?: boolean;
 
+  private _resizeObserver?: ResizeObserver;
+
   public setConfig(config: EntityConfig): void {
     if (!config) {
-      throw new Error("Configuration error");
+      throw new Error("Invalid configuration");
     }
     this._config = config;
   }
@@ -41,6 +36,12 @@ class HuiInputNumberEntityRow extends LitElement implements EntityRow {
     if (this._updated && !this._loaded) {
       this._initialLoad();
     }
+    this._attachObserver();
+  }
+
+  public disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._resizeObserver?.disconnect();
   }
 
   protected firstUpdated(): void {
@@ -48,114 +49,127 @@ class HuiInputNumberEntityRow extends LitElement implements EntityRow {
     if (this.isConnected && !this._loaded) {
       this._initialLoad();
     }
+    this._attachObserver();
   }
 
   protected shouldUpdate(changedProps: PropertyValues): boolean {
     return hasConfigOrEntityChanged(this, changedProps);
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
 
     const stateObj = this.hass.states[this._config.entity];
 
     if (!stateObj) {
       return html`
-        <hui-warning
-          >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
-          )}</hui-warning
-        >
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
       `;
     }
 
     return html`
-      <hui-generic-entity-row .hass="${this.hass}" .config="${this._config}">
-        <div>
-          ${stateObj.attributes.mode === "slider"
-            ? html`
-                <div class="flex">
-                  <ha-slider
-                    .dir="${computeRTLDirection(this.hass!)}"
-                    .step="${Number(stateObj.attributes.step)}"
-                    .min="${Number(stateObj.attributes.min)}"
-                    .max="${Number(stateObj.attributes.max)}"
-                    .value="${Number(stateObj.state)}"
-                    pin
-                    @change="${this._selectedValueChanged}"
-                    ignore-bar-touch
-                    id="input"
-                  ></ha-slider>
-                  <span class="state">
-                    ${Number(stateObj.state)}
-                    ${stateObj.attributes.unit_of_measurement}
-                  </span>
-                </div>
-              `
-            : html`
-                <paper-input
-                  no-label-float
-                  auto-validate
-                  .pattern="[0-9]+([\\.][0-9]+)?"
-                  .step="${Number(stateObj.attributes.step)}"
-                  .min="${Number(stateObj.attributes.min)}"
-                  .max="${Number(stateObj.attributes.max)}"
-                  .value="${Number(stateObj.state)}"
+      <hui-generic-entity-row .hass=${this.hass} .config=${this._config}>
+        ${stateObj.attributes.mode === "slider"
+          ? html`
+              <div class="flex">
+                <ha-slider
+                  labeled
+                  .disabled=${isUnavailableState(stateObj.state)}
+                  .step=${Number(stateObj.attributes.step)}
+                  .min=${Number(stateObj.attributes.min)}
+                  .max=${Number(stateObj.attributes.max)}
+                  .value=${stateObj.state}
+                  @change=${this._selectedValueChanged}
+                ></ha-slider>
+                <span class="state">
+                  ${this.hass.formatEntityState(stateObj)}
+                </span>
+              </div>
+            `
+          : html`
+              <div class="flex state">
+                <ha-textfield
+                  .disabled=${isUnavailableState(stateObj.state)}
+                  pattern="[0-9]+([\\.][0-9]+)?"
+                  .step=${Number(stateObj.attributes.step)}
+                  .min=${Number(stateObj.attributes.min)}
+                  .max=${Number(stateObj.attributes.max)}
+                  .value=${Number(stateObj.state).toString()}
+                  .suffix=${stateObj.attributes.unit_of_measurement || ""}
                   type="number"
-                  @change="${this._selectedValueChanged}"
-                  id="input"
-                ></paper-input>
-              `}
-        </div>
+                  @change=${this._selectedValueChanged}
+                >
+                </ha-textfield>
+              </div>
+            `}
       </hui-generic-entity-row>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      .flex {
-        display: flex;
-        align-items: center;
-      }
-      .state {
-        min-width: 45px;
-        text-align: end;
-      }
-      paper-input {
-        text-align: end;
-      }
-    `;
-  }
+  static styles = css`
+    :host {
+      display: block;
+    }
+    .flex {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-grow: 2;
+    }
+    .state {
+      min-width: 45px;
+      text-align: end;
+    }
+    ha-textfield {
+      text-align: end;
+    }
+    ha-slider {
+      width: 100%;
+      max-width: 200px;
+    }
+  `;
 
   private async _initialLoad(): Promise<void> {
     this._loaded = true;
     await this.updateComplete;
-    const element = this.shadowRoot!.querySelector(".state") as HTMLElement;
+    this._measureCard();
+  }
 
-    if (!element || !this.parentElement) {
+  private _measureCard() {
+    if (!this.isConnected) {
       return;
     }
-
-    element.hidden = this.parentElement.clientWidth <= 350;
+    const element = this.shadowRoot!.querySelector(".state") as HTMLElement;
+    if (!element) {
+      return;
+    }
+    element.hidden = this.clientWidth <= 300;
   }
 
-  private get _inputElement(): { value: string } {
-    // linter recommended the following syntax
-    return (this.shadowRoot!.getElementById("input") as unknown) as {
-      value: string;
-    };
+  private async _attachObserver(): Promise<void> {
+    if (!this._resizeObserver) {
+      this._resizeObserver = new ResizeObserver(
+        debounce(() => this._measureCard(), 250, false)
+      );
+    }
+    if (this.isConnected) {
+      this._resizeObserver.observe(this);
+    }
   }
 
-  private _selectedValueChanged(): void {
-    const element = this._inputElement;
+  private _selectedValueChanged(ev: Event): void {
     const stateObj = this.hass!.states[this._config!.entity];
 
-    if (element.value !== stateObj.state) {
-      setValue(this.hass!, stateObj.entity_id, element.value!);
+    if ((ev.target as HTMLInputElement).value !== stateObj.state) {
+      setValue(
+        this.hass!,
+        stateObj.entity_id,
+        (ev.target as HTMLInputElement).value
+      );
     }
   }
 }

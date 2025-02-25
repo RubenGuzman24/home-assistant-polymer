@@ -4,72 +4,92 @@
 // Arrays with values should be alphabetically sorted if order doesn't matter.
 // Each constant should have a description what it is supposed to be used for.
 
-/** Icon to use when no icon specified for domain. */
-export const DEFAULT_DOMAIN_ICON = "hass:bookmark";
-
-/** Panel to show when no panel is picked. */
-export const DEFAULT_PANEL = "lovelace";
-
 /** Domains that have a state card. */
 export const DOMAINS_WITH_CARD = [
+  "alert",
+  "button",
   "climate",
   "cover",
   "configurator",
+  "event",
+  "input_button",
   "input_select",
   "input_number",
   "input_text",
+  "humidifier",
+  "lawn_mower",
   "lock",
   "media_player",
+  "number",
   "scene",
   "script",
+  "select",
   "timer",
+  "text",
+  "update",
   "vacuum",
   "water_heater",
-  "weblink",
 ];
 
-/** Domains with separate more info dialog. */
-export const DOMAINS_WITH_MORE_INFO = [
-  "alarm_control_panel",
-  "automation",
+export const SENSOR_ENTITIES = [
+  "sensor",
+  "binary_sensor",
+  "calendar",
   "camera",
-  "climate",
-  "configurator",
-  "cover",
-  "fan",
-  "group",
-  "history_graph",
-  "input_datetime",
-  "light",
-  "lock",
-  "media_player",
-  "script",
-  "sun",
-  "updater",
-  "vacuum",
-  "water_heater",
+  "device_tracker",
+  "image",
   "weather",
 ];
 
-/** Domains that show no more info dialog. */
-export const DOMAINS_HIDE_MORE_INFO = [
+export const ASSIST_ENTITIES = [
+  "assist_satellite",
+  "conversation",
+  "stt",
+  "tts",
+];
+
+/** Domains that render an input element instead of a text value when displayed in a row.
+ *  Those rows should then not show a cursor pointer when hovered (which would normally
+ *  be the default) unless the element itself enforces it (e.g. a button). Also those elements
+ *  should not act as a click target to open the more info dialog (the row name and state icon
+ *  still do of course) as the click should instead e.g. activate the input field  or toggle
+ *  the button that this row shows.
+ */
+export const DOMAINS_INPUT_ROW = [
+  "automation",
+  "button",
+  "cover",
+  "date",
+  "datetime",
+  "fan",
+  "group",
+  "humidifier",
+  "input_boolean",
+  "input_button",
+  "input_datetime",
   "input_number",
   "input_select",
   "input_text",
+  "light",
+  "lock",
+  "media_player",
+  "number",
   "scene",
-  "weblink",
-];
-
-/** Domains that should have the history hidden in the more info dialog. */
-export const DOMAINS_MORE_INFO_NO_HISTORY = [
-  "camera",
-  "configurator",
-  "history_graph",
-  "scene",
+  "script",
+  "select",
+  "switch",
+  "text",
+  "time",
+  "vacuum",
+  "valve",
 ];
 
 /** States that we consider "off". */
 export const STATES_OFF = ["closed", "locked", "off"];
+
+/** Binary States */
+export const BINARY_STATE_ON = "on";
+export const BINARY_STATE_OFF = "off";
 
 /** Domains where we allow toggle in Lovelace. */
 export const DOMAINS_TOGGLE = new Set([
@@ -79,6 +99,15 @@ export const DOMAINS_TOGGLE = new Set([
   "switch",
   "group",
   "automation",
+  "humidifier",
+  "valve",
+]);
+
+/** Domains that have a dynamic entity image / picture. */
+export const DOMAINS_WITH_DYNAMIC_PICTURE = new Set([
+  "camera",
+  "image",
+  "media_player",
 ]);
 
 /** Temperature units. */

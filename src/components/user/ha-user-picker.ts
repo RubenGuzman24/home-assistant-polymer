@@ -1,65 +1,70 @@
-import "@polymer/paper-icon-button/paper-icon-button";
-import "@polymer/paper-input/paper-input";
-import "@polymer/paper-item/paper-icon-item";
-import "@polymer/paper-item/paper-item-body";
-import "@polymer/paper-dropdown-menu/paper-dropdown-menu-light";
-import "@polymer/paper-listbox/paper-listbox";
+import "@material/mwc-list/mwc-list-item";
+import type { TemplateResult } from "lit";
+import { css, html, LitElement } from "lit";
+import { property } from "lit/decorators";
 import memoizeOne from "memoize-one";
-import {
-  LitElement,
-  TemplateResult,
-  html,
-  css,
-  CSSResult,
-  property,
-} from "lit-element";
-import { HomeAssistant } from "../../types";
 import { fireEvent } from "../../common/dom/fire_event";
-import { User, fetchUsers } from "../../data/user";
-import { compare } from "../../common/string/compare";
+import { stringCompare } from "../../common/string/compare";
+import type { User } from "../../data/user";
+import { fetchUsers } from "../../data/user";
+import type { HomeAssistant } from "../../types";
+import "../ha-select";
+import "./ha-user-badge";
+import "../ha-list-item";
 
-class HaEntityPicker extends LitElement {
+class HaUserPicker extends LitElement {
   public hass?: HomeAssistant;
+
   @property() public label?: string;
-  @property() public value?: string;
-  @property() public users?: User[];
+
+  @property({ attribute: false }) public noUserLabel?: string;
+
+  @property() public value = "";
+
+  @property({ attribute: false }) public users?: User[];
+
+  @property({ type: Boolean }) public disabled = false;
 
   private _sortedUsers = memoizeOne((users?: User[]) => {
-    if (!users || users.length === 1) {
-      return users || [];
+    if (!users) {
+      return [];
     }
-    const sorted = [...users];
-    sorted.sort((a, b) => compare(a.name, b.name));
-    return sorted;
+
+    return users
+      .filter((user) => !user.system_generated)
+      .sort((a, b) =>
+        stringCompare(a.name, b.name, this.hass!.locale.language)
+      );
   });
 
-  protected render(): TemplateResult | void {
+  protected render(): TemplateResult {
     return html`
-      <paper-dropdown-menu-light .label=${this.label}>
-        <paper-listbox
-          slot="dropdown-content"
-          .selected=${this._value}
-          attr-for-selected="data-user-id"
-          @iron-select=${this._userChanged}
-        >
-          <paper-icon-item data-user-id="">
-            No user
-          </paper-icon-item>
-          ${this._sortedUsers(this.users).map(
-            (user) => html`
-              <paper-icon-item data-user-id=${user.id}>
-                <ha-user-badge .user=${user} slot="item-icon"></ha-user-badge>
-                ${user.name}
-              </paper-icon-item>
-            `
-          )}
-        </paper-listbox>
-      </paper-dropdown-menu-light>
+      <ha-select
+        .label=${this.label}
+        .disabled=${this.disabled}
+        .value=${this.value}
+        @selected=${this._userChanged}
+      >
+        ${this.users?.length === 0
+          ? html`<mwc-list-item value="">
+              ${this.noUserLabel ||
+              this.hass?.localize("ui.components.user-picker.no_user")}
+            </mwc-list-item>`
+          : ""}
+        ${this._sortedUsers(this.users).map(
+          (user) => html`
+            <ha-list-item graphic="avatar" .value=${user.id}>
+              <ha-user-badge
+                .hass=${this.hass}
+                .user=${user}
+                slot="graphic"
+              ></ha-user-badge>
+              ${user.name}
+            </ha-list-item>
+          `
+        )}
+      </ha-select>
     `;
-  }
-
-  private get _value() {
-    return this.value || "";
   }
 
   protected firstUpdated(changedProps) {
@@ -72,10 +77,10 @@ class HaEntityPicker extends LitElement {
   }
 
   private _userChanged(ev) {
-    const newValue = ev.detail.item.dataset.userId;
+    const newValue = ev.target.value;
 
-    if (newValue !== this._value) {
-      this.value = ev.detail.value;
+    if (newValue !== this.value) {
+      this.value = newValue;
       setTimeout(() => {
         fireEvent(this, "value-changed", { value: newValue });
         fireEvent(this, "change");
@@ -83,22 +88,20 @@ class HaEntityPicker extends LitElement {
     }
   }
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        display: inline-block;
-      }
-      paper-dropdown-menu-light {
-        display: block;
-      }
-      paper-listbox {
-        min-width: 200px;
-      }
-      paper-icon-item {
-        cursor: pointer;
-      }
-    `;
-  }
+  static styles = css`
+    :host {
+      display: inline-block;
+    }
+    mwc-list {
+      display: block;
+    }
+  `;
 }
 
-customElements.define("ha-user-picker", HaEntityPicker);
+customElements.define("ha-user-picker", HaUserPicker);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "ha-user-picker": HaUserPicker;
+  }
+}

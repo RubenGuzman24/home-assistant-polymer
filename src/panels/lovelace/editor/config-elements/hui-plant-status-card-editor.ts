@@ -1,97 +1,80 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-} from "lit-element";
-import "@polymer/paper-input/paper-input";
-
-import "../../../../components/entity/ha-entity-picker";
-import "../../../../components/ha-icon";
-
-import { struct } from "../../common/structs/struct";
-import { EntitiesEditorEvent, EditorTarget } from "../types";
-import { HomeAssistant } from "../../../../types";
-import { LovelaceCardEditor } from "../../types";
+import { html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { assert, assign, object, optional, string } from "superstruct";
 import { fireEvent } from "../../../../common/dom/fire_event";
-import { configElementStyle } from "./config-elements-style";
-import { PlantStatusCardConfig } from "../../cards/types";
+import "../../../../components/ha-form/ha-form";
+import type { SchemaUnion } from "../../../../components/ha-form/types";
+import type { HomeAssistant } from "../../../../types";
+import type { PlantStatusCardConfig } from "../../cards/types";
+import type { LovelaceCardEditor } from "../../types";
+import { baseLovelaceCardConfig } from "../structs/base-card-struct";
 
-const cardConfigStruct = struct({
-  type: "string",
-  entity: "string",
-  name: "string?",
-});
+const cardConfigStruct = assign(
+  baseLovelaceCardConfig,
+  object({
+    entity: optional(string()),
+    name: optional(string()),
+    theme: optional(string()),
+  })
+);
+
+const SCHEMA = [
+  { name: "entity", required: true, selector: { entity: { domain: "plant" } } },
+  { name: "name", selector: { text: {} } },
+  { name: "theme", selector: { theme: {} } },
+] as const;
 
 @customElement("hui-plant-status-card-editor")
-export class HuiPlantStatusCardEditor extends LitElement
-  implements LovelaceCardEditor {
-  @property() public hass?: HomeAssistant;
+export class HuiPlantStatusCardEditor
+  extends LitElement
+  implements LovelaceCardEditor
+{
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: PlantStatusCardConfig;
+  @state() private _config?: PlantStatusCardConfig;
 
   public setConfig(config: PlantStatusCardConfig): void {
-    config = cardConfigStruct(config);
+    assert(config, cardConfigStruct);
     this._config = config;
   }
 
-  get _entity(): string {
-    return this._config!.entity || "";
-  }
-
-  get _name(): string {
-    return this._config!.name || "";
-  }
-
-  protected render(): TemplateResult | void {
-    if (!this.hass) {
-      return html``;
+  protected render() {
+    if (!this.hass || !this._config) {
+      return nothing;
     }
 
     return html`
-      ${configElementStyle}
-      <div class="card-config">
-        <div class="side-by-side">
-          <paper-input
-            label="Name"
-            .value="${this._name}"
-            .configValue="${"name"}"
-            @value-changed="${this._valueChanged}"
-          ></paper-input>
-          <ha-entity-picker
-            .hass="${this.hass}"
-            .value="${this._entity}"
-            .configValue=${"entity"}
-            domain-filter="plant"
-            @change="${this._valueChanged}"
-            allow-custom-entity
-          ></ha-entity-picker>
-        </div>
-      </div>
+      <ha-form
+        .hass=${this.hass}
+        .data=${this._config}
+        .schema=${SCHEMA}
+        .computeLabel=${this._computeLabelCallback}
+        @value-changed=${this._valueChanged}
+      ></ha-form>
     `;
   }
 
-  private _valueChanged(ev: EntitiesEditorEvent): void {
-    if (!this._config || !this.hass) {
-      return;
-    }
-    const target = ev.target! as EditorTarget;
-    if (this[`_${target.configValue}`] === target.value) {
-      return;
-    }
-    if (target.configValue) {
-      if (target.value === "") {
-        delete this._config[target.configValue!];
-      } else {
-        this._config = {
-          ...this._config,
-          [target.configValue!]: target.value,
-        };
-      }
-    }
-    fireEvent(this, "config-changed", { config: this._config });
+  private _valueChanged(ev: CustomEvent): void {
+    fireEvent(this, "config-changed", { config: ev.detail.value });
   }
+
+  private _computeLabelCallback = (schema: SchemaUnion<typeof SCHEMA>) => {
+    if (schema.name === "entity") {
+      return this.hass!.localize(
+        "ui.panel.lovelace.editor.card.generic.entity"
+      );
+    }
+    if (schema.name === "theme") {
+      return `${this.hass!.localize(
+        "ui.panel.lovelace.editor.card.generic.theme"
+      )} (${this.hass!.localize(
+        "ui.panel.lovelace.editor.card.config.optional"
+      )})`;
+    }
+    return this.hass!.localize(
+      `ui.panel.lovelace.editor.card.generic.${schema.name}`
+    );
+  };
 }
 
 declare global {

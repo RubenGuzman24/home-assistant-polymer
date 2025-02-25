@@ -1,42 +1,47 @@
+/* eslint-disable lit/prefer-static-styles */
+import type { PropertyValues } from "lit";
+import { html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import punycode from "punycode";
+import { applyThemesOnElement } from "../common/dom/apply_themes_on_element";
+import { extractSearchParamsObject } from "../common/url/search-params";
+import "../components/ha-alert";
+import type { AuthProvider, AuthUrlSearchParams } from "../data/auth";
+import { fetchAuthProviders } from "../data/auth";
 import { litLocalizeLiteMixin } from "../mixins/lit-localize-lite-mixin";
-import {
-  LitElement,
-  html,
-  PropertyDeclarations,
-  PropertyValues,
-  CSSResult,
-  css,
-} from "lit-element";
-import "./ha-auth-flow";
-import { AuthProvider, fetchAuthProviders } from "../data/auth";
 import { registerServiceWorker } from "../util/register-service-worker";
+import "./ha-auth-flow";
 
-import(/* webpackChunkName: "pick-auth-provider" */ "../auth/ha-pick-auth-provider");
+import("./ha-pick-auth-provider");
 
-interface QueryParams {
-  client_id?: string;
-  redirect_uri?: string;
-  state?: string;
-}
+const appNames = {
+  "https://home-assistant.io/iOS": "iOS",
+  "https://home-assistant.io/android": "Android",
+};
 
-class HaAuthorize extends litLocalizeLiteMixin(LitElement) {
-  public clientId?: string;
-  public redirectUri?: string;
-  public oauth2State?: string;
-  private _authProvider?: AuthProvider;
-  private _authProviders?: AuthProvider[];
+@customElement("ha-authorize")
+export class HaAuthorize extends litLocalizeLiteMixin(LitElement) {
+  @property({ attribute: false }) public clientId?: string;
+
+  @property({ attribute: false }) public redirectUri?: string;
+
+  @property({ attribute: false }) public oauth2State?: string;
+
+  @property({ attribute: false }) public translationFragment = "page-authorize";
+
+  @state() private _authProvider?: AuthProvider;
+
+  @state() private _authProviders?: AuthProvider[];
+
+  @state() private _preselectStoreToken = false;
+
+  @state() private _ownInstance = false;
+
+  @state() private _error?: string;
 
   constructor() {
     super();
-    this.translationFragment = "page-authorize";
-    const query: QueryParams = {};
-    const values = location.search.substr(1).split("&");
-    for (const item of values) {
-      const value = item.split("=");
-      if (value.length > 1) {
-        query[decodeURIComponent(value[0])] = decodeURIComponent(value[1]);
-      }
-    }
+    const query = extractSearchParamsObject() as AuthUrlSearchParams;
     if (query.client_id) {
       this.clientId = query.client_id;
     }
@@ -48,87 +53,236 @@ class HaAuthorize extends litLocalizeLiteMixin(LitElement) {
     }
   }
 
-  static get properties(): PropertyDeclarations {
-    return {
-      _authProvider: {},
-      _authProviders: {},
-      clientId: {},
-      redirectUri: {},
-      oauth2State: {},
-    };
-  }
-
   protected render() {
-    if (!this._authProviders) {
+    if (this._error) {
       return html`
-        <p>${this.localize("ui.panel.page-authorize.initializing")}</p>
+        <style>
+          ha-authorize ha-alert {
+            display: block;
+            margin: 16px 0;
+            background-color: var(--primary-background-color, #fafafa);
+          }
+        </style>
+        <ha-alert alert-type="error"
+          >${this._error} ${this.redirectUri}</ha-alert
+        >
       `;
     }
 
-    // We don't have a good approach yet to map text markup in localization.
-    // So we sanitize the translation with innerText and then inject
-    // the name with a bold tag.
-    const loggingInWith = document.createElement("div");
-    loggingInWith.innerText = this.localize(
-      "ui.panel.page-authorize.logging_in_with",
-      "authProviderName",
-      "NAME"
-    );
-    loggingInWith.innerHTML = loggingInWith.innerHTML.replace(
-      "**NAME**",
-      `<b>${this._authProvider!.name}</b>`
-    );
-
-    const inactiveProviders = this._authProviders.filter(
+    const inactiveProviders = this._authProviders?.filter(
       (prv) => prv !== this._authProvider
     );
 
+    const app = this.clientId && this.clientId in appNames;
+
     return html`
-      <p>
-        ${this.localize(
-          "ui.panel.page-authorize.authorizing_client",
-          "clientId",
-          this.clientId
-        )}
-      </p>
-      ${loggingInWith}
+      <style>
+        ha-pick-auth-provider {
+          display: block;
+          margin-top: 24px;
+        }
+        ha-auth-flow {
+          display: flex;
+          justify-content: center;
+          flex-direction: column;
+          align-items: center;
+        }
+        ha-alert {
+          display: block;
+          margin: 16px 0;
+          background-color: var(--primary-background-color, #fafafa);
+        }
+        p {
+          font-size: 14px;
+          line-height: 20px;
+        }
+        .card-content {
+          background: var(
+            --ha-card-background,
+            var(--card-background-color, white)
+          );
+          box-shadow: var(--ha-card-box-shadow, none);
+          box-sizing: border-box;
+          border-radius: var(--ha-card-border-radius, 12px);
+          border-width: var(--ha-card-border-width, 1px);
+          border-style: solid;
+          border-color: var(
+            --ha-card-border-color,
+            var(--divider-color, #e0e0e0)
+          );
+          color: var(--primary-text-color);
+          position: relative;
+          padding: 16px;
+        }
+        .action {
+          margin: 16px 0 8px;
+          display: flex;
+          width: 100%;
+          max-width: 336px;
+          justify-content: center;
+        }
+        .space-between {
+          justify-content: space-between;
+        }
+        .footer {
+          padding-top: 8px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        ha-language-picker {
+          width: 200px;
+          border-radius: 4px;
+          overflow: hidden;
+          --ha-select-height: 40px;
+          --mdc-select-fill-color: none;
+          --mdc-select-label-ink-color: var(--primary-text-color, #212121);
+          --mdc-select-ink-color: var(--primary-text-color, #212121);
+          --mdc-select-idle-line-color: transparent;
+          --mdc-select-hover-line-color: transparent;
+          --mdc-select-dropdown-icon-color: var(--primary-text-color, #212121);
+          --mdc-shape-small: 0;
+        }
+        .footer a {
+          text-decoration: none;
+          color: var(--primary-text-color);
+          margin-right: 16px;
+          margin-inline-end: 16px;
+          margin-inline-start: initial;
+        }
+        h1 {
+          font-size: 28px;
+          font-weight: 400;
+          margin-top: 16px;
+          margin-bottom: 16px;
+        }
+      </style>
 
-      <ha-auth-flow
-        .resources="${this.resources}"
-        .clientId="${this.clientId}"
-        .redirectUri="${this.redirectUri}"
-        .oauth2State="${this.oauth2State}"
-        .authProvider="${this._authProvider}"
-        .step="{{step}}"
-      ></ha-auth-flow>
+      ${!this._ownInstance
+        ? html`<ha-alert .alertType=${app ? "info" : "warning"}>
+            ${app
+              ? this.localize("ui.panel.page-authorize.authorizing_app", {
+                  app: appNames[this.clientId!],
+                })
+              : this.localize("ui.panel.page-authorize.authorizing_client", {
+                  clientId: html`<b
+                    >${this.clientId
+                      ? punycode.toASCII(this.clientId)
+                      : this.clientId}</b
+                  >`,
+                })}
+          </ha-alert>`
+        : nothing}
 
-      ${inactiveProviders.length > 0
-        ? html`
-            <ha-pick-auth-provider
-              .resources="${this.resources}"
-              .clientId="${this.clientId}"
-              .authProviders="${inactiveProviders}"
-              @pick-auth-provider="${this._handleAuthProviderPick}"
-            ></ha-pick-auth-provider>
-          `
-        : ""}
+      <div class="card-content">
+        ${!this._authProvider
+          ? html`<p>
+              ${this.localize("ui.panel.page-authorize.initializing")}
+            </p> `
+          : html`<ha-auth-flow
+                .clientId=${this.clientId}
+                .redirectUri=${this.redirectUri}
+                .oauth2State=${this.oauth2State}
+                .authProvider=${this._authProvider}
+                .localize=${this.localize}
+                .initStoreToken=${this._preselectStoreToken}
+              ></ha-auth-flow>
+              ${inactiveProviders!.length > 0
+                ? html`
+                    <ha-pick-auth-provider
+                      .localize=${this.localize}
+                      .clientId=${this.clientId}
+                      .authProviders=${inactiveProviders!}
+                      @pick-auth-provider=${this._handleAuthProviderPick}
+                    ></ha-pick-auth-provider>
+                  `
+                : ""}`}
+      </div>
+      <div class="footer">
+        <ha-language-picker
+          .value=${this.language}
+          .label=${""}
+          native-name
+          @value-changed=${this._languageChanged}
+          inline-arrow
+        ></ha-language-picker>
+        <a
+          href="https://www.home-assistant.io/docs/authentication/"
+          target="_blank"
+          rel="noreferrer noopener"
+          >${this.localize("ui.panel.page-authorize.help")}</a
+        >
+      </div>
     `;
+  }
+
+  createRenderRoot() {
+    return this;
   }
 
   protected firstUpdated(changedProps: PropertyValues) {
     super.firstUpdated(changedProps);
-    this._fetchAuthProviders();
 
     if (!this.redirectUri) {
+      this._error = "Invalid redirect URI";
       return;
+    }
+
+    let url: URL;
+
+    try {
+      url = new URL(this.redirectUri);
+    } catch (_err) {
+      this._error = "Invalid redirect URI";
+      return;
+    }
+
+    if (
+      // eslint-disable-next-line no-script-url
+      ["javascript:", "data:", "vbscript:", "file:", "about:"].includes(
+        url.protocol
+      )
+    ) {
+      this._error = "Invalid redirect URI";
+      return;
+    }
+
+    this._fetchAuthProviders();
+
+    if (matchMedia("(prefers-color-scheme: dark)").matches) {
+      applyThemesOnElement(
+        document.documentElement,
+        {
+          default_theme: "default",
+          default_dark_theme: null,
+          themes: {},
+          darkMode: true,
+          theme: "default",
+        },
+        undefined,
+        undefined,
+        true
+      );
+    }
+
+    if (window.innerWidth > 450) {
+      import("../resources/particles");
     }
 
     // If we are logging into the instance that is hosting this auth form
     // we will register the service worker to start preloading.
-    const tempA = document.createElement("a");
-    tempA.href = this.redirectUri!;
-    if (tempA.host === location.host) {
-      registerServiceWorker(false);
+    if (url.host === location.host) {
+      this._ownInstance = true;
+      registerServiceWorker(this, false);
+    }
+
+    import("../components/ha-language-picker");
+  }
+
+  protected updated(changedProps: PropertyValues) {
+    super.updated(changedProps);
+    if (changedProps.has("language")) {
+      document.querySelector("html")!.setAttribute("lang", this.language!);
     }
   }
 
@@ -145,19 +299,21 @@ class HaAuthorize extends litLocalizeLiteMixin(LitElement) {
         response.status === 400 &&
         authProviders.code === "onboarding_required"
       ) {
-        location.href = "/?";
+        location.href = `/onboarding.html${location.search}`;
         return;
       }
 
-      if (authProviders.length === 0) {
-        alert("No auth providers returned. Unable to finish login.");
+      if (authProviders.providers.length === 0) {
+        this._error = "No auth providers returned. Unable to finish login.";
         return;
       }
 
-      this._authProviders = authProviders;
-      this._authProvider = authProviders[0];
-    } catch (err) {
-      // tslint:disable-next-line
+      this._authProviders = authProviders.providers;
+      this._authProvider = authProviders.providers[0];
+      this._preselectStoreToken = authProviders.preselect_remember_me;
+    } catch (err: any) {
+      this._error = "Unable to fetch auth providers.";
+      // eslint-disable-next-line
       console.error("Error loading auth providers", err);
     }
   }
@@ -166,13 +322,20 @@ class HaAuthorize extends litLocalizeLiteMixin(LitElement) {
     this._authProvider = ev.detail;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      ha-pick-auth-provider {
-        display: block;
-        margin-top: 48px;
-      }
-    `;
+  private _languageChanged(ev: CustomEvent) {
+    const language = ev.detail.value;
+    this.language = language;
+
+    try {
+      window.localStorage.setItem("selectedLanguage", JSON.stringify(language));
+    } catch (_err: any) {
+      // Ignore
+    }
   }
 }
-customElements.define("ha-authorize", HaAuthorize);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "ha-authorize": HaAuthorize;
+  }
+}

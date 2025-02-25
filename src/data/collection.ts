@@ -1,10 +1,10 @@
-import {
+import type {
   Collection,
   Connection,
-  getCollection,
   UnsubscribeFunc,
 } from "home-assistant-js-websocket";
-import { Store } from "home-assistant-js-websocket/dist/store";
+import { getCollection } from "home-assistant-js-websocket";
+import type { Store } from "home-assistant-js-websocket/dist/store";
 
 interface OptimisticCollection<T> extends Collection<T> {
   save(data: T): Promise<unknown>;
@@ -17,12 +17,12 @@ interface OptimisticCollection<T> extends Collection<T> {
  */
 
 export const getOptimisticCollection = <StateType>(
-  saveCollection: (conn: Connection, data: StateType) => Promise<unknown>,
+  saveCollection: (conn2: Connection, data: StateType) => Promise<unknown>,
   conn: Connection,
   key: string,
-  fetchCollection: (conn: Connection) => Promise<StateType>,
+  fetchCollection: (conn2: Connection) => Promise<StateType>,
   subscribeUpdates?: (
-    conn: Connection,
+    conn2: Connection,
     store: Store<StateType>
   ) => Promise<UnsubscribeFunc>
 ): OptimisticCollection<StateType> => {
@@ -63,7 +63,7 @@ export const getOptimisticCollection = <StateType>(
 
       try {
         return await saveCollection(conn, data);
-      } catch (err) {
+      } catch (err: any) {
         if (store) {
           store.setState(current as any, true);
         }

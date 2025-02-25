@@ -1,83 +1,114 @@
-import { html, LitElement, TemplateResult } from "lit-element";
+import { LitElement, css, html, nothing } from "lit";
+import { property, state } from "lit/decorators";
+import { computeRTLDirection } from "../../../common/util/compute_rtl";
+import type { LovelaceCardConfig } from "../../../data/lovelace/config/card";
+import type { HomeAssistant } from "../../../types";
+import type { LovelaceCard, LovelaceCardEditor } from "../types";
+import "./hui-card";
+import type { HuiCard } from "./hui-card";
+import type { StackCardConfig } from "./types";
 
-import { createCardElement } from "../common/create-card-element";
-import { LovelaceCard } from "../types";
-import { LovelaceCardConfig } from "../../../data/lovelace";
-import { HomeAssistant } from "../../../types";
-import { StackCardConfig } from "./types";
-
-export abstract class HuiStackCard extends LitElement implements LovelaceCard {
-  static get properties() {
-    return {
-      _config: {},
-    };
+export abstract class HuiStackCard<T extends StackCardConfig = StackCardConfig>
+  extends LitElement
+  implements LovelaceCard
+{
+  public static async getConfigElement(): Promise<LovelaceCardEditor> {
+    await import("../editor/config-elements/hui-stack-card-editor");
+    return document.createElement("hui-stack-card-editor");
   }
 
-  set hass(hass: HomeAssistant) {
-    this._hass = hass;
-
-    if (!this._cards) {
-      return;
-    }
-
-    for (const element of this._cards) {
-      element.hass = this._hass;
-    }
+  public static getStubConfig(): Record<string, unknown> {
+    return { cards: [] };
   }
-  protected _cards?: LovelaceCard[];
-  private _config?: StackCardConfig;
-  private _hass?: HomeAssistant;
 
-  public abstract getCardSize(): number;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  public setConfig(config: StackCardConfig): void {
+  @property({ type: Boolean }) public preview = false;
+
+  @state() protected _cards?: HuiCard[];
+
+  @state() protected _config?: T;
+
+  @property({ attribute: false }) public layout?: string;
+
+  public getCardSize(): number | Promise<number> {
+    return 1;
+  }
+
+  public setConfig(config: T): void {
     if (!config || !config.cards || !Array.isArray(config.cards)) {
-      throw new Error("Card config incorrect");
+      throw new Error("Invalid configuration");
     }
     this._config = config;
     this._cards = config.cards.map((card) => {
-      const element = this._createCardElement(card) as LovelaceCard;
+      const element = this._createCardElement(card);
       return element;
     });
   }
 
-  protected render(): TemplateResult | void {
-    if (!this._config) {
-      return html``;
+  protected update(changedProperties) {
+    super.update(changedProperties);
+
+    if (this._cards) {
+      if (changedProperties.has("hass")) {
+        this._cards.forEach((card) => {
+          card.hass = this.hass;
+        });
+      }
+      if (changedProperties.has("preview")) {
+        this._cards.forEach((card) => {
+          card.preview = this.preview;
+        });
+      }
     }
 
-    return html`
-      ${this.renderStyle()}
-      <div id="root">${this._cards}</div>
-    `;
+    if (changedProperties.has("layout")) {
+      this.toggleAttribute("ispanel", this.layout === "panel");
+    }
   }
 
-  protected abstract renderStyle(): TemplateResult;
-
   private _createCardElement(cardConfig: LovelaceCardConfig) {
-    const element = createCardElement(cardConfig) as LovelaceCard;
-    if (this._hass) {
-      element.hass = this._hass;
-    }
-    element.addEventListener(
-      "ll-rebuild",
-      (ev) => {
-        ev.stopPropagation();
-        this._rebuildCard(element, cardConfig);
-      },
-      { once: true }
-    );
+    const element = document.createElement("hui-card");
+    element.hass = this.hass;
+    element.preview = this.preview;
+    element.config = cardConfig;
+    element.load();
     return element;
   }
 
-  private _rebuildCard(
-    cardElToReplace: LovelaceCard,
-    config: LovelaceCardConfig
-  ): void {
-    const newCardEl = this._createCardElement(config);
-    cardElToReplace.parentElement!.replaceChild(newCardEl, cardElToReplace);
-    this._cards = this._cards!.map((curCardEl) =>
-      curCardEl === cardElToReplace ? newCardEl : curCardEl
-    );
+  protected render() {
+    if (!this._config || !this._cards) {
+      return nothing;
+    }
+
+    return html`
+      ${this._config.title
+        ? html`<h1 class="card-header">${this._config.title}</h1>`
+        : ""}
+      <div id="root" dir=${this.hass ? computeRTLDirection(this.hass) : "ltr"}>
+        ${this._cards}
+      </div>
+    `;
   }
+
+  static sharedStyles = css`
+    .card-header {
+      color: var(--ha-card-header-color, var(--primary-text-color));
+      text-align: var(--ha-stack-title-text-align, start);
+      font-family: var(--ha-card-header-font-family, inherit);
+      font-size: var(--ha-card-header-font-size, 24px);
+      font-weight: normal;
+      margin-block-start: 0px;
+      margin-block-end: 0px;
+      letter-spacing: -0.012em;
+      line-height: 32px;
+      display: block;
+      padding: 24px 16px 16px;
+    }
+    :host([ispanel]) #root {
+      --ha-card-border-radius: var(--restore-card-border-radius);
+      --ha-card-border-width: var(--restore-card-border-width);
+      --ha-card-box-shadow: var(--restore-card-box-shadow);
+    }
+  `;
 }

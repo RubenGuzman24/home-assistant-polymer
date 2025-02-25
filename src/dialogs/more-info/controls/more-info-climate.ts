@@ -1,369 +1,417 @@
-import "@polymer/iron-flex-layout/iron-flex-layout-classes";
-import "@polymer/paper-item/paper-item";
-import "@polymer/paper-listbox/paper-listbox";
-import "@polymer/paper-toggle-button/paper-toggle-button";
+import "@material/mwc-list/mwc-list-item";
 import {
-  LitElement,
-  html,
-  TemplateResult,
-  CSSResult,
-  css,
-  property,
-  PropertyValues,
-} from "lit-element";
-
-import "../../../components/ha-climate-control";
-import "../../../components/ha-paper-slider";
-import "../../../components/ha-paper-dropdown-menu";
-
+  mdiArrowOscillating,
+  mdiFan,
+  mdiThermometer,
+  mdiTuneVariant,
+  mdiWaterPercent,
+} from "@mdi/js";
+import type { CSSResultGroup, PropertyValues } from "lit";
+import { LitElement, css, html, nothing } from "lit";
+import { property, state } from "lit/decorators";
+import { stopPropagation } from "../../../common/dom/stop_propagation";
 import { supportsFeature } from "../../../common/entity/supports-feature";
-
-import { computeRTLDirection } from "../../../common/util/compute_rtl";
-import { HomeAssistant } from "../../../types";
+import "../../../components/ha-attribute-icon";
+import "../../../components/ha-control-select-menu";
+import "../../../components/ha-icon-button-group";
+import "../../../components/ha-icon-button-toggle";
+import "../../../components/ha-list-item";
+import "../../../components/ha-select";
+import "../../../components/ha-switch";
+import type { ClimateEntity } from "../../../data/climate";
 import {
-  ClimateEntity,
-  CLIMATE_SUPPORT_TARGET_TEMPERATURE,
-  CLIMATE_SUPPORT_TARGET_TEMPERATURE_RANGE,
-  CLIMATE_SUPPORT_TARGET_HUMIDITY,
-  CLIMATE_SUPPORT_FAN_MODE,
-  CLIMATE_SUPPORT_SWING_MODE,
-  CLIMATE_SUPPORT_AUX_HEAT,
-  CLIMATE_SUPPORT_PRESET_MODE,
+  ClimateEntityFeature,
+  climateHvacModeIcon,
   compareClimateHvacModes,
 } from "../../../data/climate";
-import { fireEvent } from "../../../common/dom/fire_event";
-import { classMap } from "lit-html/directives/class-map";
+import { UNAVAILABLE } from "../../../data/entity";
+import "../../../state-control/climate/ha-state-control-climate-humidity";
+import "../../../state-control/climate/ha-state-control-climate-temperature";
+import type { HomeAssistant } from "../../../types";
+import "../components/ha-more-info-control-select-container";
+import { moreInfoControlStyle } from "../components/more-info-control-style";
+
+type MainControl = "temperature" | "humidity";
 
 class MoreInfoClimate extends LitElement {
-  @property() public hass!: HomeAssistant;
-  @property() public stateObj?: ClimateEntity;
-  private _resizeDebounce?: number;
+  @property({ attribute: false }) public hass!: HomeAssistant;
 
-  protected render(): TemplateResult | void {
+  @property({ attribute: false }) public stateObj?: ClimateEntity;
+
+  @state() private _mainControl: MainControl = "temperature";
+
+  protected willUpdate(changedProps: PropertyValues): void {
+    if (
+      changedProps.has("stateObj") &&
+      this.stateObj &&
+      this._mainControl === "humidity" &&
+      !supportsFeature(this.stateObj, ClimateEntityFeature.TARGET_HUMIDITY)
+    ) {
+      this._mainControl = "temperature";
+    }
+  }
+
+  protected render() {
     if (!this.stateObj) {
-      return html``;
+      return nothing;
     }
 
-    const hass = this.hass;
     const stateObj = this.stateObj;
 
-    const supportTargetTemperature = supportsFeature(
-      stateObj,
-      CLIMATE_SUPPORT_TARGET_TEMPERATURE
-    );
-    const supportTargetTemperatureRange = supportsFeature(
-      stateObj,
-      CLIMATE_SUPPORT_TARGET_TEMPERATURE_RANGE
-    );
     const supportTargetHumidity = supportsFeature(
       stateObj,
-      CLIMATE_SUPPORT_TARGET_HUMIDITY
+      ClimateEntityFeature.TARGET_HUMIDITY
     );
-    const supportFanMode = supportsFeature(stateObj, CLIMATE_SUPPORT_FAN_MODE);
+    const supportFanMode = supportsFeature(
+      stateObj,
+      ClimateEntityFeature.FAN_MODE
+    );
     const supportPresetMode = supportsFeature(
       stateObj,
-      CLIMATE_SUPPORT_PRESET_MODE
+      ClimateEntityFeature.PRESET_MODE
     );
     const supportSwingMode = supportsFeature(
       stateObj,
-      CLIMATE_SUPPORT_SWING_MODE
+      ClimateEntityFeature.SWING_MODE
     );
-    const supportAuxHeat = supportsFeature(stateObj, CLIMATE_SUPPORT_AUX_HEAT);
+    const supportSwingHorizontalMode = supportsFeature(
+      stateObj,
+      ClimateEntityFeature.SWING_HORIZONTAL_MODE
+    );
 
-    const temperatureStepSize =
-      stateObj.attributes.target_temp_step ||
-      (hass.config.unit_system.temperature.indexOf("F") === -1 ? 0.5 : 1);
-
-    const rtlDirection = computeRTLDirection(hass);
+    const currentTemperature = this.stateObj.attributes.current_temperature;
+    const currentHumidity = this.stateObj.attributes.current_humidity;
 
     return html`
-      <div
-        class=${classMap({
-          "has-current_temperature":
-            "current_temperature" in stateObj.attributes,
-          "has-current_humidity": "current_humidity" in stateObj.attributes,
-          "has-target_temperature": supportTargetTemperature,
-          "has-target_temperature_range": supportTargetTemperatureRange,
-          "has-target_humidity": supportTargetHumidity,
-          "has-fan_mode": supportFanMode,
-          "has-swing_mode": supportSwingMode,
-          "has-aux_heat": supportAuxHeat,
-          "has-preset_mode": supportPresetMode,
-        })}
-      >
-        <div class="container-temperature">
-          <div class=${stateObj.state}>
-            ${supportTargetTemperature || supportTargetTemperatureRange
-              ? html`
-                  <div>
-                    ${hass.localize("ui.card.climate.target_temperature")}
-                  </div>
-                `
-              : ""}
-            ${stateObj.attributes.temperature
-              ? html`
-                  <ha-climate-control
-                    .value=${stateObj.attributes.temperature}
-                    .units=${hass.config.unit_system.temperature}
-                    .step=${temperatureStepSize}
-                    .min=${stateObj.attributes.min_temp}
-                    .max=${stateObj.attributes.max_temp}
-                    @change=${this._targetTemperatureChanged}
-                  ></ha-climate-control>
-                `
-              : ""}
-            ${stateObj.attributes.target_temp_low ||
-            stateObj.attributes.target_temp_high
-              ? html`
-                  <ha-climate-control
-                    .value=${stateObj.attributes.target_temp_low}
-                    .units=${hass.config.unit_system.temperature}
-                    .step=${temperatureStepSize}
-                    .min=${stateObj.attributes.min_temp}
-                    .max=${stateObj.attributes.target_temp_high}
-                    class="range-control-left"
-                    @change=${this._targetTemperatureLowChanged}
-                  ></ha-climate-control>
-                  <ha-climate-control
-                    .value=${stateObj.attributes.target_temp_high}
-                    .units=${hass.config.unit_system.temperature}
-                    .step=${temperatureStepSize}
-                    .min=${stateObj.attributes.target_temp_low}
-                    .max=${stateObj.attributes.max_temp}
-                    class="range-control-right"
-                    @change=${this._targetTemperatureHighChanged}
-                  ></ha-climate-control>
-                `
-              : ""}
-          </div>
-        </div>
-
+      <div class="current">
+        ${currentTemperature != null
+          ? html`
+              <div>
+                <p class="label">
+                  ${this.hass.formatEntityAttributeName(
+                    this.stateObj,
+                    "current_temperature"
+                  )}
+                </p>
+                <p class="value">
+                  ${this.hass.formatEntityAttributeValue(
+                    this.stateObj,
+                    "current_temperature"
+                  )}
+                </p>
+              </div>
+            `
+          : nothing}
+        ${currentHumidity != null
+          ? html`
+              <div>
+                <p class="label">
+                  ${this.hass.formatEntityAttributeName(
+                    this.stateObj,
+                    "current_humidity"
+                  )}
+                </p>
+                <p class="value">
+                  ${this.hass.formatEntityAttributeValue(
+                    this.stateObj,
+                    "current_humidity"
+                  )}
+                </p>
+              </div>
+            `
+          : nothing}
+      </div>
+      <div class="controls">
+        ${this._mainControl === "temperature"
+          ? html`
+              <ha-state-control-climate-temperature
+                .hass=${this.hass}
+                .stateObj=${this.stateObj}
+              ></ha-state-control-climate-temperature>
+            `
+          : nothing}
+        ${this._mainControl === "humidity"
+          ? html`
+              <ha-state-control-climate-humidity
+                .hass=${this.hass}
+                .stateObj=${this.stateObj}
+              ></ha-state-control-climate-humidity>
+            `
+          : nothing}
         ${supportTargetHumidity
           ? html`
-              <div class="container-humidity">
-                <div>${hass.localize("ui.card.climate.target_humidity")}</div>
-                <div class="single-row">
-                  <div class="target-humidity">
-                    ${stateObj.attributes.humidity} %
-                  </div>
-                  <ha-paper-slider
-                    class="humidity"
-                    step="1"
-                    pin
-                    ignore-bar-touch
-                    dir=${rtlDirection}
-                    .min=${stateObj.attributes.min_humidity}
-                    .max=${stateObj.attributes.max_humidity}
-                    .secondaryProgress=${stateObj.attributes.max_humidity}
-                    .value=${stateObj.attributes.humidity}
-                    @change=${this._targetHumiditySliderChanged}
-                  >
-                  </ha-paper-slider>
-                </div>
-              </div>
-            `
-          : ""}
-
-        <div class="container-hvac_modes">
-          <div class="controls">
-            <ha-paper-dropdown-menu
-              label-float
-              dynamic-align
-              .label=${hass.localize("ui.card.climate.operation")}
-            >
-              <paper-listbox
-                slot="dropdown-content"
-                attr-for-selected="item-name"
-                .selected=${stateObj.state}
-                @selected-changed=${this._handleOperationmodeChanged}
-              >
-                ${stateObj.attributes.hvac_modes
-                  .concat()
-                  .sort(compareClimateHvacModes)
-                  .map(
-                    (mode) => html`
-                      <paper-item item-name=${mode}>
-                        ${hass.localize(`state.climate.${mode}`)}
-                      </paper-item>
-                    `
+              <ha-icon-button-group>
+                <ha-icon-button-toggle
+                  .selected=${this._mainControl === "temperature"}
+                  .disabled=${this.stateObj!.state === UNAVAILABLE}
+                  .label=${this.hass.localize(
+                    "ui.dialogs.more_info_control.climate.temperature"
                   )}
-              </paper-listbox>
-            </ha-paper-dropdown-menu>
-          </div>
-        </div>
-
-        ${supportPresetMode
-          ? html`
-              <div class="container-preset_modes">
-                <ha-paper-dropdown-menu
-                  label-float
-                  dynamic-align
-                  .label=${hass.localize("ui.card.climate.preset_mode")}
+                  .control=${"temperature"}
+                  @click=${this._setMainControl}
                 >
-                  <paper-listbox
-                    slot="dropdown-content"
-                    attr-for-selected="item-name"
-                    .selected=${stateObj.attributes.preset_mode}
-                    @selected-changed=${this._handlePresetmodeChanged}
-                  >
-                    ${stateObj.attributes.preset_modes!.map(
-                      (mode) => html`
-                        <paper-item item-name=${mode}>
-                          ${hass.localize(
-                            `state_attributes.climate.preset_mode.${mode}`
-                          ) || mode}
-                        </paper-item>
-                      `
-                    )}
-                  </paper-listbox>
-                </ha-paper-dropdown-menu>
-              </div>
-            `
-          : ""}
-        ${supportFanMode
-          ? html`
-              <div class="container-fan_list">
-                <ha-paper-dropdown-menu
-                  label-float
-                  dynamic-align
-                  .label=${hass.localize("ui.card.climate.fan_mode")}
+                  <ha-svg-icon .path=${mdiThermometer}></ha-svg-icon>
+                </ha-icon-button-toggle>
+                <ha-icon-button-toggle
+                  .selected=${this._mainControl === "humidity"}
+                  .disabled=${this.stateObj!.state === UNAVAILABLE}
+                  .label=${this.hass.localize(
+                    "ui.dialogs.more_info_control.climate.humidity"
+                  )}
+                  .control=${"humidity"}
+                  @click=${this._setMainControl}
                 >
-                  <paper-listbox
-                    slot="dropdown-content"
-                    attr-for-selected="item-name"
-                    .selected=${stateObj.attributes.fan_mode}
-                    @selected-changed=${this._handleFanmodeChanged}
-                  >
-                    ${stateObj.attributes.fan_modes!.map(
-                      (mode) => html`
-                        <paper-item item-name=${mode}>
-                          ${hass.localize(
-                            `state_attributes.climate.fan_mode.${mode}`
-                          ) || mode}
-                        </paper-item>
-                      `
-                    )}
-                  </paper-listbox>
-                </ha-paper-dropdown-menu>
-              </div>
+                  <ha-svg-icon .path=${mdiWaterPercent}></ha-svg-icon>
+                </ha-icon-button-toggle>
+              </ha-icon-button-group>
             `
-          : ""}
-        ${supportSwingMode
-          ? html`
-              <div class="container-swing_list">
-                <ha-paper-dropdown-menu
-                  label-float
-                  dynamic-align
-                  .label=${hass.localize("ui.card.climate.swing_mode")}
-                >
-                  <paper-listbox
-                    slot="dropdown-content"
-                    attr-for-selected="item-name"
-                    .selected=${stateObj.attributes.swing_mode}
-                    @selected-changed=${this._handleSwingmodeChanged}
-                  >
-                    ${stateObj.attributes.swing_modes!.map(
-                      (mode) => html`
-                        <paper-item item-name=${mode}>${mode}</paper-item>
-                      `
-                    )}
-                  </paper-listbox>
-                </ha-paper-dropdown-menu>
-              </div>
-            `
-          : ""}
-        ${supportAuxHeat
-          ? html`
-              <div class="container-aux_heat">
-                <div class="center horizontal layout single-row">
-                  <div class="flex">
-                    ${hass.localize("ui.card.climate.aux_heat")}
-                  </div>
-                  <paper-toggle-button
-                    .checked=${stateObj.attributes.aux_heat === "on"}
-                    @change=${this._auxToggleChanged}
-                  ></paper-toggle-button>
-                </div>
-              </div>
-            `
-          : ""}
+          : nothing}
       </div>
+      <ha-more-info-control-select-container>
+        <ha-control-select-menu
+          .label=${this.hass.localize("ui.card.climate.mode")}
+          .value=${stateObj.state}
+          .disabled=${this.stateObj.state === UNAVAILABLE}
+          fixedMenuPosition
+          naturalMenuWidth
+          @selected=${this._handleOperationModeChanged}
+          @closed=${stopPropagation}
+        >
+          ${html`
+            <ha-svg-icon
+              slot="icon"
+              .path=${climateHvacModeIcon(stateObj.state)}
+            ></ha-svg-icon>
+          `}
+          ${stateObj.attributes.hvac_modes
+            .concat()
+            .sort(compareClimateHvacModes)
+            .map(
+              (mode) => html`
+                <ha-list-item .value=${mode} graphic="icon">
+                  <ha-svg-icon
+                    slot="graphic"
+                    .path=${climateHvacModeIcon(mode)}
+                  ></ha-svg-icon>
+                  ${this.hass.formatEntityState(stateObj, mode)}
+                </ha-list-item>
+              `
+            )}
+        </ha-control-select-menu>
+        ${supportPresetMode && stateObj.attributes.preset_modes
+          ? html`
+              <ha-control-select-menu
+                .label=${this.hass.formatEntityAttributeName(
+                  stateObj,
+                  "preset_mode"
+                )}
+                .value=${stateObj.attributes.preset_mode}
+                .disabled=${this.stateObj.state === UNAVAILABLE}
+                fixedMenuPosition
+                naturalMenuWidth
+                @selected=${this._handlePresetmodeChanged}
+                @closed=${stopPropagation}
+              >
+                ${stateObj.attributes.preset_mode
+                  ? html`
+                      <ha-attribute-icon
+                        slot="icon"
+                        .hass=${this.hass}
+                        .stateObj=${stateObj}
+                        attribute="preset_mode"
+                        .attributeValue=${stateObj.attributes.preset_mode}
+                      ></ha-attribute-icon>
+                    `
+                  : html`
+                      <ha-svg-icon
+                        slot="icon"
+                        .path=${mdiTuneVariant}
+                      ></ha-svg-icon>
+                    `}
+                ${stateObj.attributes.preset_modes!.map(
+                  (mode) => html`
+                    <ha-list-item .value=${mode} graphic="icon">
+                      <ha-attribute-icon
+                        slot="graphic"
+                        .hass=${this.hass}
+                        .stateObj=${stateObj}
+                        attribute="preset_mode"
+                        .attributeValue=${mode}
+                      ></ha-attribute-icon>
+                      ${this.hass.formatEntityAttributeValue(
+                        stateObj,
+                        "preset_mode",
+                        mode
+                      )}
+                    </ha-list-item>
+                  `
+                )}
+              </ha-control-select-menu>
+            `
+          : nothing}
+        ${supportFanMode && stateObj.attributes.fan_modes
+          ? html`
+              <ha-control-select-menu
+                .label=${this.hass.formatEntityAttributeName(
+                  stateObj,
+                  "fan_mode"
+                )}
+                .value=${stateObj.attributes.fan_mode}
+                .disabled=${this.stateObj.state === UNAVAILABLE}
+                fixedMenuPosition
+                naturalMenuWidth
+                @selected=${this._handleFanModeChanged}
+                @closed=${stopPropagation}
+              >
+                ${stateObj.attributes.fan_mode
+                  ? html`
+                      <ha-attribute-icon
+                        slot="icon"
+                        .hass=${this.hass}
+                        .stateObj=${stateObj}
+                        attribute="fan_mode"
+                        .attributeValue=${stateObj.attributes.fan_mode}
+                      ></ha-attribute-icon>
+                    `
+                  : html`
+                      <ha-svg-icon slot="icon" .path=${mdiFan}></ha-svg-icon>
+                    `}
+                ${stateObj.attributes.fan_modes!.map(
+                  (mode) => html`
+                    <ha-list-item .value=${mode} graphic="icon">
+                      <ha-attribute-icon
+                        slot="graphic"
+                        .hass=${this.hass}
+                        .stateObj=${stateObj}
+                        attribute="fan_mode"
+                        .attributeValue=${mode}
+                      ></ha-attribute-icon>
+                      ${this.hass.formatEntityAttributeValue(
+                        stateObj,
+                        "fan_mode",
+                        mode
+                      )}
+                    </ha-list-item>
+                  `
+                )}
+              </ha-control-select-menu>
+            `
+          : nothing}
+        ${supportSwingMode && stateObj.attributes.swing_modes
+          ? html`
+              <ha-control-select-menu
+                .label=${this.hass.formatEntityAttributeName(
+                  stateObj,
+                  "swing_mode"
+                )}
+                .value=${stateObj.attributes.swing_mode}
+                .disabled=${this.stateObj.state === UNAVAILABLE}
+                fixedMenuPosition
+                naturalMenuWidth
+                @selected=${this._handleSwingmodeChanged}
+                @closed=${stopPropagation}
+              >
+                ${stateObj.attributes.swing_mode
+                  ? html`
+                      <ha-attribute-icon
+                        slot="icon"
+                        .hass=${this.hass}
+                        .stateObj=${stateObj}
+                        attribute="swing_mode"
+                        .attributeValue=${stateObj.attributes.swing_mode}
+                      ></ha-attribute-icon>
+                    `
+                  : html`
+                      <ha-svg-icon
+                        slot="icon"
+                        .path=${mdiArrowOscillating}
+                      ></ha-svg-icon>
+                    `}
+                ${stateObj.attributes.swing_modes!.map(
+                  (mode) => html`
+                    <ha-list-item .value=${mode} graphic="icon">
+                      <ha-attribute-icon
+                        slot="graphic"
+                        .hass=${this.hass}
+                        .stateObj=${stateObj}
+                        attribute="swing_mode"
+                        .attributeValue=${mode}
+                      ></ha-attribute-icon>
+                      ${this.hass.formatEntityAttributeValue(
+                        stateObj,
+                        "swing_mode",
+                        mode
+                      )}
+                    </ha-list-item>
+                  `
+                )}
+              </ha-control-select-menu>
+            `
+          : nothing}
+        ${supportSwingHorizontalMode &&
+        stateObj.attributes.swing_horizontal_modes
+          ? html`
+              <ha-control-select-menu
+                .label=${this.hass.formatEntityAttributeName(
+                  stateObj,
+                  "swing_horizontal_mode"
+                )}
+                .value=${stateObj.attributes.swing_horizontal_mode}
+                .disabled=${this.stateObj.state === UNAVAILABLE}
+                fixedMenuPosition
+                naturalMenuWidth
+                @selected=${this._handleSwingHorizontalmodeChanged}
+                @closed=${stopPropagation}
+              >
+                ${stateObj.attributes.swing_horizontal_mode
+                  ? html`
+                      <ha-attribute-icon
+                        slot="icon"
+                        .hass=${this.hass}
+                        .stateObj=${stateObj}
+                        attribute="swing_horizontal_mode"
+                        .attributeValue=${stateObj.attributes
+                          .swing_horizontal_mode}
+                      ></ha-attribute-icon>
+                    `
+                  : html`
+                      <ha-svg-icon
+                        slot="icon"
+                        .path=${mdiArrowOscillating}
+                      ></ha-svg-icon>
+                    `}
+                ${stateObj.attributes.swing_horizontal_modes!.map(
+                  (mode) => html`
+                    <ha-list-item .value=${mode} graphic="icon">
+                      <ha-attribute-icon
+                        slot="graphic"
+                        .hass=${this.hass}
+                        .stateObj=${stateObj}
+                        attribute="swing_horizontal_mode"
+                        .attributeValue=${mode}
+                      ></ha-attribute-icon>
+                      ${this.hass.formatEntityAttributeValue(
+                        stateObj,
+                        "swing_horizontal_mode",
+                        mode
+                      )}
+                    </ha-list-item>
+                  `
+                )}
+              </ha-control-select-menu>
+            `
+          : nothing}
+      </ha-more-info-control-select-container>
     `;
   }
 
-  protected updated(changedProps: PropertyValues) {
-    super.updated(changedProps);
-    if (!changedProps.has("stateObj") || !this.stateObj) {
-      return;
-    }
-
-    if (this._resizeDebounce) {
-      clearTimeout(this._resizeDebounce);
-    }
-    this._resizeDebounce = window.setTimeout(() => {
-      fireEvent(this, "iron-resize");
-      this._resizeDebounce = undefined;
-    }, 500);
+  private _setMainControl(ev: any) {
+    ev.stopPropagation();
+    this._mainControl = ev.currentTarget.control;
   }
 
-  private _targetTemperatureChanged(ev) {
+  private _handleFanModeChanged(ev) {
     const newVal = ev.target.value;
-    this._callServiceHelper(
-      this.stateObj!.attributes.temperature,
-      newVal,
-      "set_temperature",
-      { temperature: newVal }
-    );
-  }
-
-  private _targetTemperatureLowChanged(ev) {
-    const newVal = ev.currentTarget.value;
-    this._callServiceHelper(
-      this.stateObj!.attributes.target_temp_low,
-      newVal,
-      "set_temperature",
-      {
-        target_temp_low: newVal,
-        target_temp_high: this.stateObj!.attributes.target_temp_high,
-      }
-    );
-  }
-
-  private _targetTemperatureHighChanged(ev) {
-    const newVal = ev.currentTarget.value;
-    this._callServiceHelper(
-      this.stateObj!.attributes.target_temp_high,
-      newVal,
-      "set_temperature",
-      {
-        target_temp_low: this.stateObj!.attributes.target_temp_low,
-        target_temp_high: newVal,
-      }
-    );
-  }
-
-  private _targetHumiditySliderChanged(ev) {
-    const newVal = ev.target.value;
-    this._callServiceHelper(
-      this.stateObj!.attributes.humidity,
-      newVal,
-      "set_humidity",
-      { humidity: newVal }
-    );
-  }
-
-  private _auxToggleChanged(ev) {
-    const newVal = ev.target.checked;
-    this._callServiceHelper(
-      this.stateObj!.attributes.aux_heat === "on",
-      newVal,
-      "set_aux_heat",
-      { aux_heat: newVal }
-    );
-  }
-
-  private _handleFanmodeChanged(ev) {
-    const newVal = ev.detail.value;
     this._callServiceHelper(
       this.stateObj!.attributes.fan_mode,
       newVal,
@@ -372,15 +420,15 @@ class MoreInfoClimate extends LitElement {
     );
   }
 
-  private _handleOperationmodeChanged(ev) {
-    const newVal = ev.detail.value;
+  private _handleOperationModeChanged(ev) {
+    const newVal = ev.target.value;
     this._callServiceHelper(this.stateObj!.state, newVal, "set_hvac_mode", {
       hvac_mode: newVal,
     });
   }
 
   private _handleSwingmodeChanged(ev) {
-    const newVal = ev.detail.value;
+    const newVal = ev.target.value;
     this._callServiceHelper(
       this.stateObj!.attributes.swing_mode,
       newVal,
@@ -389,14 +437,26 @@ class MoreInfoClimate extends LitElement {
     );
   }
 
-  private _handlePresetmodeChanged(ev) {
-    const newVal = ev.detail.value || null;
+  private _handleSwingHorizontalmodeChanged(ev) {
+    const newVal = ev.target.value;
     this._callServiceHelper(
-      this.stateObj!.attributes.preset_mode,
+      this.stateObj!.attributes.swing_horizontal_mode,
       newVal,
-      "set_preset_mode",
-      { preset_mode: newVal }
+      "set_swing_horizontal_mode",
+      { swing_horizontal_mode: newVal }
     );
+  }
+
+  private _handlePresetmodeChanged(ev) {
+    const newVal = ev.target.value || null;
+    if (newVal) {
+      this._callServiceHelper(
+        this.stateObj!.attributes.preset_mode,
+        newVal,
+        "set_preset_mode",
+        { preset_mode: newVal }
+      );
+    }
   }
 
   private async _callServiceHelper(
@@ -420,7 +480,9 @@ class MoreInfoClimate extends LitElement {
     // We reset stateObj to re-sync the inputs with the state. It will be out
     // of sync if our service call did not result in the entity to be turned
     // on. Since the state is not changing, the resync is not called automatic.
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 2000);
+    });
 
     // No need to resync if we received a new state.
     if (this.stateObj !== curState) {
@@ -435,64 +497,81 @@ class MoreInfoClimate extends LitElement {
     }
   }
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        color: var(--primary-text-color);
-      }
+  static get styles(): CSSResultGroup {
+    return [
+      moreInfoControlStyle,
+      css`
+        :host {
+          color: var(--primary-text-color);
+        }
 
-      .container-hvac_modes iron-icon,
-      .container-fan_list iron-icon,
-      .container-swing_list iron-icon {
-        margin: 22px 16px 0 0;
-      }
+        .current {
+          display: flex;
+          flex-direction: row;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          margin-bottom: 40px;
+        }
 
-      ha-paper-dropdown-menu {
-        width: 100%;
-      }
+        .current div {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          flex: 1;
+        }
 
-      paper-item {
-        cursor: pointer;
-      }
+        .current p {
+          margin: 0;
+          text-align: center;
+          color: var(--primary-text-color);
+        }
 
-      ha-paper-slider {
-        width: 100%;
-      }
+        .current .label {
+          opacity: 0.8;
+          font-size: 14px;
+          line-height: 16px;
+          letter-spacing: 0.4px;
+          margin-bottom: 4px;
+        }
 
-      .container-humidity .single-row {
-        display: flex;
-        height: 50px;
-      }
+        .current .value {
+          font-size: 22px;
+          font-weight: 500;
+          line-height: 28px;
+          direction: ltr;
+        }
+        ha-select {
+          width: 100%;
+          margin-top: 8px;
+        }
 
-      .target-humidity {
-        width: 90px;
-        font-size: 200%;
-        margin: auto;
-        direction: ltr;
-      }
+        .container-humidity .single-row {
+          display: flex;
+          height: 50px;
+        }
 
-      ha-climate-control.range-control-left,
-      ha-climate-control.range-control-right {
-        float: left;
-        width: 46%;
-      }
-      ha-climate-control.range-control-left {
-        margin-right: 4%;
-      }
-      ha-climate-control.range-control-right {
-        margin-left: 4%;
-      }
+        .target-humidity {
+          width: 90px;
+          font-size: 200%;
+          margin: auto;
+          direction: ltr;
+        }
 
-      .humidity {
-        --paper-slider-active-color: var(--paper-blue-400);
-        --paper-slider-secondary-color: var(--paper-blue-400);
-      }
-
-      .single-row {
-        padding: 8px 0;
-      }
-    `;
+        .single-row {
+          padding: 8px 0;
+        }
+      `,
+    ];
   }
 }
 
 customElements.define("more-info-climate", MoreInfoClimate);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "more-info-climate": MoreInfoClimate;
+  }
+}

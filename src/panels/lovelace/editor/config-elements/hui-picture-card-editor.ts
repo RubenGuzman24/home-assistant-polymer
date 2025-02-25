@@ -1,120 +1,99 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-} from "lit-element";
-import "@polymer/paper-input/paper-input";
-
-import "../../components/hui-action-editor";
-
-import { struct } from "../../common/structs/struct";
-import {
-  EntitiesEditorEvent,
-  EditorTarget,
-  actionConfigStruct,
-} from "../types";
-import { HomeAssistant } from "../../../../types";
-import { LovelaceCardEditor } from "../../types";
+import { html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { assert, assign, object, optional, string } from "superstruct";
 import { fireEvent } from "../../../../common/dom/fire_event";
-import { configElementStyle } from "./config-elements-style";
-import { ActionConfig } from "../../../../data/lovelace";
-import { PictureCardConfig } from "../../cards/types";
+import type { SchemaUnion } from "../../../../components/ha-form/types";
+import "../../../../components/ha-theme-picker";
+import type { HomeAssistant } from "../../../../types";
+import type { PictureCardConfig } from "../../cards/types";
+import "../../components/hui-action-editor";
+import type { LovelaceCardEditor } from "../../types";
+import { actionConfigStruct } from "../structs/action-struct";
+import { baseLovelaceCardConfig } from "../structs/base-card-struct";
 
-const cardConfigStruct = struct({
-  type: "string",
-  image: "string?",
-  tap_action: struct.optional(actionConfigStruct),
-  hold_action: struct.optional(actionConfigStruct),
-});
+const cardConfigStruct = assign(
+  baseLovelaceCardConfig,
+  object({
+    image: optional(string()),
+    image_entity: optional(string()),
+    tap_action: optional(actionConfigStruct),
+    hold_action: optional(actionConfigStruct),
+    theme: optional(string()),
+    alt_text: optional(string()),
+  })
+);
+
+const SCHEMA = [
+  { name: "image", selector: { image: {} } },
+  {
+    name: "image_entity",
+    selector: { entity: { domain: ["image", "person"] } },
+  },
+  { name: "alt_text", selector: { text: {} } },
+  { name: "theme", selector: { theme: {} } },
+  {
+    name: "tap_action",
+    selector: { ui_action: {} },
+  },
+  {
+    name: "hold_action",
+    selector: { ui_action: {} },
+  },
+] as const;
 
 @customElement("hui-picture-card-editor")
-export class HuiPictureCardEditor extends LitElement
-  implements LovelaceCardEditor {
-  @property() public hass?: HomeAssistant;
+export class HuiPictureCardEditor
+  extends LitElement
+  implements LovelaceCardEditor
+{
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: PictureCardConfig;
+  @state() private _config?: PictureCardConfig;
 
   public setConfig(config: PictureCardConfig): void {
-    config = cardConfigStruct(config);
+    assert(config, cardConfigStruct);
     this._config = config;
   }
 
-  get _image(): string {
-    return this._config!.image || "";
-  }
-
-  get _tap_action(): ActionConfig {
-    return this._config!.tap_action || { action: "none" };
-  }
-
-  get _hold_action(): ActionConfig {
-    return this._config!.hold_action || { action: "none" };
-  }
-
-  protected render(): TemplateResult | void {
-    if (!this.hass) {
-      return html``;
+  protected render() {
+    if (!this.hass || !this._config) {
+      return nothing;
     }
 
-    const actions = ["navigate", "call-service", "none"];
-
     return html`
-      ${configElementStyle}
-      <div class="card-config">
-        <paper-input
-          label="Image Url"
-          .value="${this._image}"
-          .configValue="${"image"}"
-          @value-changed="${this._valueChanged}"
-        ></paper-input>
-        <div class="side-by-side">
-          <hui-action-editor
-            label="Tap Action"
-            .hass="${this.hass}"
-            .config="${this._tap_action}"
-            .actions="${actions}"
-            .configValue="${"tap_action"}"
-            @action-changed="${this._valueChanged}"
-          ></hui-action-editor>
-          <hui-action-editor
-            label="Hold Action"
-            .hass="${this.hass}"
-            .config="${this._hold_action}"
-            .actions="${actions}"
-            .configValue="${"hold_action"}"
-            @action-changed="${this._valueChanged}"
-          ></hui-action-editor>
-        </div>
-      </div>
+      <ha-form
+        .hass=${this.hass}
+        .data=${this._config}
+        .schema=${SCHEMA}
+        .computeLabel=${this._computeLabelCallback}
+        @value-changed=${this._valueChanged}
+      ></ha-form>
     `;
   }
 
-  private _valueChanged(ev: EntitiesEditorEvent): void {
-    if (!this._config || !this.hass) {
-      return;
-    }
-    const target = ev.target! as EditorTarget;
-
-    if (
-      this[`_${target.configValue}`] === target.value ||
-      this[`_${target.configValue}`] === target.config
-    ) {
-      return;
-    }
-    if (target.configValue) {
-      if (target.value === "") {
-        delete this._config[target.configValue!];
-      } else {
-        this._config = {
-          ...this._config,
-          [target.configValue!]: target.value ? target.value : target.config,
-        };
-      }
-    }
-    fireEvent(this, "config-changed", { config: this._config });
+  private _valueChanged(ev: CustomEvent): void {
+    fireEvent(this, "config-changed", { config: ev.detail.value });
   }
+
+  private _computeLabelCallback = (schema: SchemaUnion<typeof SCHEMA>) => {
+    switch (schema.name) {
+      case "theme":
+        return `${this.hass!.localize(
+          "ui.panel.lovelace.editor.card.generic.theme"
+        )} (${this.hass!.localize(
+          "ui.panel.lovelace.editor.card.config.optional"
+        )})`;
+      default:
+        return (
+          this.hass!.localize(
+            `ui.panel.lovelace.editor.card.picture-card.${schema.name}`
+          ) ||
+          this.hass!.localize(
+            `ui.panel.lovelace.editor.card.generic.${schema.name}`
+          )
+        );
+    }
+  };
 }
 
 declare global {

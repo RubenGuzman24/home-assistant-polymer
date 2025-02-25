@@ -1,194 +1,223 @@
-import {
-  LitElement,
-  TemplateResult,
-  html,
-  customElement,
-  PropertyValues,
-  property,
-  CSSResult,
-  css,
-} from "lit-element";
-import "@material/mwc-button/mwc-button";
-import {
-  loadConfigFlowDialog,
-  showConfigFlowDialog,
-} from "../dialogs/config-flow/show-dialog-config-flow";
-import { HomeAssistant } from "../types";
-import {
-  getConfigFlowsInProgress,
-  getConfigEntries,
-  ConfigEntry,
-  ConfigFlowProgress,
-  localizeConfigFlowTitle,
-} from "../data/config_entries";
-import { compare } from "../common/string/compare";
-import "./integration-badge";
-import { LocalizeFunc } from "../common/translations/localize";
-import { debounce } from "../common/util/debounce";
+import type { UnsubscribeFunc } from "home-assistant-js-websocket";
+import type { CSSResultGroup, PropertyValues } from "lit";
+import { LitElement, css, html, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { isComponentLoaded } from "../common/config/is_component_loaded";
 import { fireEvent } from "../common/dom/fire_event";
-import { onboardIntegrationStep } from "../data/onboarding";
-import { genClientId } from "home-assistant-js-websocket";
+import { stringCompare } from "../common/string/compare";
+import type { LocalizeFunc } from "../common/translations/localize";
+import "../components/ha-button";
+import type { ConfigEntry } from "../data/config_entries";
+import { subscribeConfigEntries } from "../data/config_entries";
+import { subscribeConfigFlowInProgress } from "../data/config_flow";
+import { domainToName } from "../data/integration";
+import { scanUSBDevices } from "../data/usb";
+import { SubscribeMixin } from "../mixins/subscribe-mixin";
+import type { HomeAssistant } from "../types";
+import "./integration-badge";
+import { onBoardingStyles } from "./styles";
+
+const HIDDEN_DOMAINS = new Set([
+  "google_translate",
+  "hassio",
+  "met",
+  "radio_browser",
+  "rpi_power",
+  "shopping_list",
+  "sun",
+]);
 
 @customElement("onboarding-integrations")
-class OnboardingIntegrations extends LitElement {
-  @property() public hass!: HomeAssistant;
-  @property() public onboardingLocalize!: LocalizeFunc;
-  @property() private _entries?: ConfigEntry[];
-  @property() private _discovered?: ConfigFlowProgress[];
-  private _unsubEvents?: () => void;
+class OnboardingIntegrations extends SubscribeMixin(LitElement) {
+  @property({ attribute: false }) public hass!: HomeAssistant;
 
-  public connectedCallback() {
-    super.connectedCallback();
-    this.hass.connection
-      .subscribeEvents(
-        debounce(() => this._loadData(), 500),
-        "config_entry_discovered"
-      )
-      .then((unsub) => {
-        this._unsubEvents = unsub;
-      });
+  @property({ attribute: false }) public onboardingLocalize!: LocalizeFunc;
+
+  @state() private _entries: ConfigEntry[] = [];
+
+  @state() private _discoveredDomains?: Set<string>;
+
+  public hassSubscribe(): (UnsubscribeFunc | Promise<UnsubscribeFunc>)[] {
+    return [
+      subscribeConfigFlowInProgress(this.hass, (flows) => {
+        this._discoveredDomains = new Set(
+          flows
+            .filter((flow) => !HIDDEN_DOMAINS.has(flow.handler))
+            .map((flow) => flow.handler)
+        );
+        this.hass.loadBackendTranslation(
+          "title",
+          Array.from(this._discoveredDomains)
+        );
+      }),
+      subscribeConfigEntries(
+        this.hass,
+        (messages) => {
+          let fullUpdate = false;
+          const newEntries: ConfigEntry[] = [];
+          const integrations = new Set<string>();
+          messages.forEach((message) => {
+            if (message.type === null || message.type === "added") {
+              if (HIDDEN_DOMAINS.has(message.entry.domain)) {
+                return;
+              }
+              newEntries.push(message.entry);
+              integrations.add(message.entry.domain);
+              if (message.type === null) {
+                fullUpdate = true;
+              }
+            } else if (message.type === "removed") {
+              this._entries = this._entries!.filter(
+                (entry) => entry.entry_id !== message.entry.entry_id
+              );
+            } else if (message.type === "updated") {
+              if (HIDDEN_DOMAINS.has(message.entry.domain)) {
+                return;
+              }
+              const newEntry = message.entry;
+              this._entries = this._entries!.map((entry) =>
+                entry.entry_id === newEntry.entry_id ? newEntry : entry
+              );
+            }
+          });
+          if (!newEntries.length && !fullUpdate) {
+            return;
+          }
+          this.hass.loadBackendTranslation("title", Array.from(integrations));
+          const existingEntries = fullUpdate ? [] : this._entries;
+          this._entries = [...existingEntries!, ...newEntries];
+        },
+        { type: ["device", "hub", "service"] }
+      ),
+    ];
   }
 
-  public disconnectedCallback() {
-    super.disconnectedCallback();
-    if (this._unsubEvents) {
-      this._unsubEvents();
-    }
-  }
-
-  protected render(): TemplateResult | void {
-    if (!this._entries || !this._discovered) {
-      return html``;
+  protected render() {
+    if (!this._discoveredDomains) {
+      return nothing;
     }
     // Render discovered and existing entries together sorted by localized title.
-    const entries: Array<[string, TemplateResult]> = this._entries.map(
-      (entry) => {
-        const title = this.hass.localize(
-          `component.${entry.domain}.config.title`
-        );
-        return [
-          title,
-          html`
-            <integration-badge
-              .title=${title}
-              icon="hass:check"
-            ></integration-badge>
-          `,
-        ];
-      }
+    let uniqueDomains = new Set<string>();
+    this._entries.forEach((entry) => {
+      uniqueDomains.add(entry.domain);
+    });
+    uniqueDomains = new Set([...uniqueDomains, ...this._discoveredDomains]);
+    let domains: [string, string][] = [];
+    for (const domain of uniqueDomains.values()) {
+      domains.push([domain, domainToName(this.hass.localize, domain)]);
+    }
+    domains = domains.sort((a, b) =>
+      stringCompare(a[0], b[0], this.hass.locale.language)
     );
-    const discovered: Array<[string, TemplateResult]> = this._discovered.map(
-      (flow) => {
-        const title = localizeConfigFlowTitle(this.hass.localize, flow);
-        return [
-          title,
-          html`
-            <button .flowId=${flow.flow_id} @click=${this._continueFlow}>
-              <integration-badge
-                clickable
-                .title=${title}
-                icon="hass:plus"
-              ></integration-badge>
-            </button>
-          `,
-        ];
-      }
-    );
-    const content = [...entries, ...discovered]
-      .sort((a, b) => compare(a[0], b[0]))
-      .map((item) => item[1]);
+
+    const foundIntegrations = domains.length;
+
+    // there is a possibility that the user has no integrations
+    if (foundIntegrations === 0) {
+      return html`
+        <div class="all-set-icon">🎉</div>
+        <h1>
+          ${this.onboardingLocalize(
+            "ui.panel.page-onboarding.integration.all_set"
+          )}
+        </h1>
+        <p>
+          ${this.onboardingLocalize(
+            "ui.panel.page-onboarding.integration.lets_start"
+          )}
+        </p>
+        <div class="footer">
+          <ha-button unelevated @click=${this._finish}>
+            ${this.onboardingLocalize(
+              "ui.panel.page-onboarding.integration.finish"
+            )}
+          </ha-button>
+        </div>
+      `;
+    }
+
+    if (domains.length > 12) {
+      domains = domains.slice(0, 11);
+    }
 
     return html`
+      <h1>
+        ${this.onboardingLocalize(
+          "ui.panel.page-onboarding.integration.header"
+        )}
+      </h1>
       <p>
         ${this.onboardingLocalize("ui.panel.page-onboarding.integration.intro")}
       </p>
       <div class="badges">
-        ${content}
-        <button @click=${this._createFlow}>
-          <integration-badge
-            clickable
-            title=${this.onboardingLocalize(
-              "ui.panel.page-onboarding.integration.more_integrations"
-            )}
-            icon="hass:dots-horizontal"
-          ></integration-badge>
-        </button>
+        ${domains.map(
+          ([domain, title]) =>
+            html`<integration-badge
+              .domain=${domain}
+              .title=${title}
+              .darkOptimizedIcon=${this.hass.themes?.darkMode}
+            ></integration-badge>`
+        )}
+        ${foundIntegrations > domains.length
+          ? html`<div class="more">
+              ${this.onboardingLocalize(
+                "ui.panel.page-onboarding.integration.more_integrations",
+                { count: foundIntegrations - domains.length }
+              )}
+            </div>`
+          : nothing}
       </div>
       <div class="footer">
-        <mwc-button @click=${this._finish}>
+        <ha-button unelevated @click=${this._finish}>
           ${this.onboardingLocalize(
             "ui.panel.page-onboarding.integration.finish"
           )}
-        </mwc-button>
+        </ha-button>
       </div>
     `;
   }
 
   protected firstUpdated(changedProps: PropertyValues) {
     super.firstUpdated(changedProps);
-    loadConfigFlowDialog();
-    this._loadData();
-    /* polyfill for paper-dropdown */
-    import(/* webpackChunkName: "polyfill-web-animations-next" */ "web-animations-js/web-animations-next-lite.min");
+    this.hass.loadBackendTranslation("title");
+    this._scanUSBDevices();
   }
 
-  private _createFlow() {
-    showConfigFlowDialog(this, {
-      dialogClosedCallback: () => this._loadData(),
-    });
-  }
-
-  private _continueFlow(ev) {
-    showConfigFlowDialog(this, {
-      continueFlowId: ev.currentTarget.flowId,
-      dialogClosedCallback: () => this._loadData(),
-    });
-  }
-
-  private async _loadData() {
-    const [discovered, entries] = await Promise.all([
-      getConfigFlowsInProgress(this.hass!),
-      getConfigEntries(this.hass!),
-    ]);
-    this._discovered = discovered;
-    // We filter out the config entry for the local weather.
-    // It is one that we create automatically and it will confuse the user
-    // if it starts showing up during onboarding.
-    this._entries = entries.filter((entry) => entry.domain !== "met");
+  private async _scanUSBDevices() {
+    if (!isComponentLoaded(this.hass, "usb")) {
+      return;
+    }
+    await scanUSBDevices(this.hass);
   }
 
   private async _finish() {
-    const result = await onboardIntegrationStep(this.hass, {
-      client_id: genClientId(),
-    });
     fireEvent(this, "onboarding-step", {
       type: "integration",
-      result,
     });
   }
 
-  static get styles(): CSSResult {
-    return css`
-      .badges {
-        margin-top: 24px;
-      }
-      .badges > * {
-        width: 24%;
-        min-width: 90px;
-        margin-bottom: 24px;
-      }
-      button {
-        display: inline-block;
-        cursor: pointer;
-        padding: 0;
-        border: 0;
-        background: 0;
-        font: inherit;
-      }
-      .footer {
-        text-align: right;
-      }
-    `;
+  static get styles(): CSSResultGroup {
+    return [
+      onBoardingStyles,
+      css`
+        .badges {
+          margin-top: 24px;
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(106px, 1fr));
+          row-gap: 24px;
+        }
+        .more {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100%;
+        }
+        .all-set-icon {
+          font-size: 64px;
+          text-align: center;
+        }
+      `,
+    ];
   }
 }
 

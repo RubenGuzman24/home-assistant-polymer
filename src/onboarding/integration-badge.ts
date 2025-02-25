@@ -1,82 +1,68 @@
-import {
-  LitElement,
-  TemplateResult,
-  html,
-  customElement,
-  property,
-  CSSResult,
-  css,
-} from "lit-element";
-import "../components/ha-icon";
+import type { TemplateResult } from "lit";
+import { css, html, LitElement } from "lit";
+import { customElement, property } from "lit/decorators";
+import "../components/ha-svg-icon";
+import { brandsUrl } from "../util/brands-url";
 
 @customElement("integration-badge")
 class IntegrationBadge extends LitElement {
-  @property() public icon!: string;
-  @property() public title!: string;
-  @property() public badgeIcon?: string;
-  @property({ type: Boolean, reflect: true }) public clickable = false;
+  @property() public domain!: string;
 
-  protected render(): TemplateResult | void {
+  // eslint-disable-next-line lit/no-native-attributes
+  @property({ attribute: false }) public title!: string;
+
+  @property({ attribute: "dark-optimized-icon", type: Boolean })
+  public darkOptimizedIcon = false;
+
+  @property({ attribute: false, type: Boolean, reflect: true })
+  public clickable = false;
+
+  protected render(): TemplateResult {
     return html`
       <div class="icon">
-        <iron-icon .icon=${this.icon}></iron-icon>
-        ${this.badgeIcon
-          ? html`
-              <ha-icon class="badge" .icon=${this.badgeIcon}></ha-icon>
-            `
-          : ""}
+        <img
+          alt=""
+          src=${brandsUrl({
+            domain: this.domain,
+            type: "icon",
+            darkOptimized: this.darkOptimizedIcon,
+          })}
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer"
+        />
       </div>
       <div class="title">${this.title}</div>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        display: inline-flex;
-        flex-direction: column;
-        text-align: center;
-        color: var(--primary-text-color);
-      }
+  static styles = css`
+    :host {
+      display: inline-flex;
+      flex-direction: column;
+      text-align: center;
+      color: var(--primary-text-color);
+    }
 
-      :host([clickable]) {
-        color: var(--primary-text-color);
-      }
+    img {
+      max-width: 100%;
+      max-height: 100%;
+    }
 
-      .icon {
-        position: relative;
-        margin: 0 auto 8px;
-        height: 40px;
-        width: 40px;
-        border-radius: 50%;
-        border: 1px solid var(--secondary-text-color);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
+    .icon {
+      position: relative;
+      margin: 0 auto 8px;
+      height: 40px;
+      width: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
 
-      :host([clickable]) .icon {
-        border-color: var(--primary-color);
-        border-width: 2px;
-      }
-
-      .badge {
-        position: absolute;
-        color: var(--primary-color);
-        bottom: -5px;
-        right: -5px;
-        background-color: white;
-        border-radius: 50%;
-        width: 18px;
-        display: block;
-        height: 18px;
-      }
-
-      .title {
-        min-height: 2.3em;
-      }
-    `;
-  }
+    .title {
+      min-height: 2.3em;
+      word-break: break-word;
+    }
+  `;
 }
 
 declare global {

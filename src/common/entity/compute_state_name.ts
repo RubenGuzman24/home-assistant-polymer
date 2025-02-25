@@ -1,7 +1,13 @@
-import { HassEntity } from "home-assistant-js-websocket";
-import computeObjectId from "./compute_object_id";
+import type { HassEntity } from "home-assistant-js-websocket";
+import { computeObjectId } from "./compute_object_id";
 
-export default (stateObj: HassEntity): string =>
-  stateObj.attributes.friendly_name === undefined
-    ? computeObjectId(stateObj.entity_id).replace(/_/g, " ")
-    : stateObj.attributes.friendly_name || "";
+export const computeStateNameFromEntityAttributes = (
+  entityId: string,
+  attributes: Record<string, any>
+): string =>
+  attributes.friendly_name === undefined
+    ? computeObjectId(entityId).replace(/_/g, " ")
+    : (attributes.friendly_name ?? "").toString();
+
+export const computeStateName = (stateObj: HassEntity): string =>
+  computeStateNameFromEntityAttributes(stateObj.entity_id, stateObj.attributes);

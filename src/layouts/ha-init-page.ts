@@ -1,69 +1,125 @@
-import "@polymer/paper-spinner/paper-spinner-lite";
-import "@material/mwc-button";
-
-import { LitElement, html, CSSResult, css, property } from "lit-element";
-import { removeInitSkeleton } from "../util/init-skeleton";
+import type { PropertyValues } from "lit";
+import { css, html, LitElement } from "lit";
+import { property, state } from "lit/decorators";
 
 class HaInitPage extends LitElement {
   @property({ type: Boolean }) public error = false;
 
+  @property({ type: Boolean }) public migration = false;
+
+  @state() private _retryInSeconds = 60;
+
+  private _showProgressIndicatorTimeout?: number;
+
+  private _retryInterval?: number;
+
   protected render() {
-    return html`
-      <div>
-        <img src="/static/icons/favicon-192x192.png" height="192" />
-        ${this.error
-          ? html`
-              <p>Unable to connect to Home Assistant.</p>
-              <mwc-button @click=${this._retry}>Retry</mwc-button>
-              ${location.host.includes("ui.nabu.casa")
-                ? html`
-                    <p>
-                      It is possible that you are seeing this screen because
-                      your Home Assistant is not currently connected. You can
-                      ask it to come online via
-                      <a href="https://remote.nabucasa.com/"
-                        >the Remote UI portal</a
-                      >.
-                    </p>
-                  `
-                : ""}
-            `
-          : html`
-              <paper-spinner-lite active></paper-spinner-lite>
-              <p>Loading data</p>
-            `}
-      </div>
-    `;
+    return this.error
+      ? html`
+          <p>Unable to connect to Home Assistant.</p>
+          <p class="retry-text">
+            Retrying in ${this._retryInSeconds} seconds...
+          </p>
+          <mwc-button @click=${this._retry}>Retry now</mwc-button>
+          ${location.host.includes("ui.nabu.casa")
+            ? html`
+                <p>
+                  It is possible that you are seeing this screen because your
+                  Home Assistant is not currently connected. You can ask it to
+                  come online from your
+                  <a href="https://account.nabucasa.com/"
+                    >Nabu Casa account page</a
+                  >.
+                </p>
+              `
+            : ""}
+        `
+      : html`
+          <div id="progress-indicator-wrapper">
+            <ha-circular-progress indeterminate></ha-circular-progress>
+          </div>
+          <div id="loading-text">
+            ${this.migration
+              ? html`
+                  Database upgrade is in progress, Home Assistant will not start
+                  until the upgrade is completed.
+                  <br /><br />
+                  The upgrade may need a long time to complete, please be
+                  patient.
+                `
+              : "Loading data"}
+          </div>
+        `;
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._showProgressIndicatorTimeout) {
+      clearTimeout(this._showProgressIndicatorTimeout);
+    }
+    if (this._retryInterval) {
+      clearInterval(this._retryInterval);
+    }
+  }
+
+  protected willUpdate(changedProperties: PropertyValues<this>) {
+    if (changedProperties.has("error") && this.error) {
+      import("@material/mwc-button");
+    }
   }
 
   protected firstUpdated() {
-    removeInitSkeleton();
+    this._showProgressIndicatorTimeout = window.setTimeout(() => {
+      import("../components/ha-circular-progress");
+    }, 5000);
+
+    this._retryInterval = window.setInterval(() => {
+      const remainingSeconds = this._retryInSeconds--;
+      if (remainingSeconds <= 0) {
+        this._retry();
+      }
+    }, 1000);
   }
 
   private _retry() {
+    if (this._retryInterval) {
+      clearInterval(this._retryInterval);
+    }
     location.reload();
   }
 
-  static get styles(): CSSResult {
-    return css`
-      div {
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-      }
-      paper-spinner-lite {
-        margin-top: 9px;
-      }
-      a {
-        color: var(--primary-color);
-      }
-      p {
-        max-width: 350px;
-      }
-    `;
-  }
+  static styles = css`
+    :host {
+      flex: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #progress-indicator-wrapper {
+      display: flex;
+      align-items: center;
+      margin: 25px 0;
+      height: 50px;
+    }
+    a {
+      color: var(--primary-color);
+    }
+    .retry-text {
+      margin-top: 0;
+    }
+    p,
+    #loading-text {
+      max-width: 350px;
+      color: var(--primary-text-color);
+      text-align: center;
+    }
+  `;
 }
 
 customElements.define("ha-init-page", HaInitPage);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "ha-init-page": HaInitPage;
+  }
+}

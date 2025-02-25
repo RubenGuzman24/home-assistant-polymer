@@ -1,32 +1,22 @@
-import {
-  property,
-  PropertyValues,
-  LitElement,
-  TemplateResult,
-  html,
-  CSSResult,
-  css,
-} from "lit-element";
-
-import { HomeAssistant, CameraEntity } from "../../../types";
-import {
-  CAMERA_SUPPORT_STREAM,
-  CameraPreferences,
-  fetchCameraPrefs,
-  updateCameraPrefs,
-} from "../../../data/camera";
-import { supportsFeature } from "../../../common/entity/supports-feature";
+import { css, html, LitElement, nothing } from "lit";
+import { property, state } from "lit/decorators";
 import "../../../components/ha-camera-stream";
-import "@polymer/paper-checkbox/paper-checkbox";
-// Not duplicate import, it's for typing
-// tslint:disable-next-line
-import { PaperCheckboxElement } from "@polymer/paper-checkbox/paper-checkbox";
+import type { CameraEntity } from "../../../data/camera";
+import type { HomeAssistant } from "../../../types";
+import "../../../components/buttons/ha-progress-button";
+import { UNAVAILABLE } from "../../../data/entity";
+import { fileDownload } from "../../../util/file_download";
+import { showToast } from "../../../util/toast";
+import { slugify } from "../../../common/string/slugify";
 
 class MoreInfoCamera extends LitElement {
-  @property() public hass?: HomeAssistant;
-  @property() public stateObj?: CameraEntity;
-  @property() private _cameraPrefs?: CameraPreferences;
-  @property() private _attached = false;
+  @property({ attribute: false }) public hass!: HomeAssistant;
+
+  @property({ attribute: false }) public stateObj?: CameraEntity;
+
+  @state() private _attached = false;
+
+  @state() private _waiting = false;
 
   public connectedCallback() {
     super.connectedCallback();
@@ -38,89 +28,93 @@ class MoreInfoCamera extends LitElement {
     this._attached = false;
   }
 
-  protected render(): TemplateResult | void {
-    if (!this._attached || !this.hass || !this.stateObj) {
-      return html``;
+  protected render() {
+    if (!this._attached || !this.stateObj) {
+      return nothing;
     }
 
     return html`
       <ha-camera-stream
-        .hass="${this.hass}"
-        .stateObj="${this.stateObj}"
-        showcontrols
+        .hass=${this.hass}
+        .stateObj=${this.stateObj}
+        allow-exoplayer
+        controls
       ></ha-camera-stream>
-      ${this._cameraPrefs
-        ? html`
-            <paper-checkbox
-              .checked=${this._cameraPrefs.preload_stream}
-              @change=${this._handleCheckboxChanged}
-            >
-              Preload stream
-            </paper-checkbox>
-          `
-        : undefined}
+
+      <div class="actions">
+        <ha-progress-button
+          @click=${this._downloadSnapshot}
+          .progress=${this._waiting}
+          .disabled=${this.stateObj.state === UNAVAILABLE}
+        >
+          ${this.hass.localize(
+            "ui.dialogs.more_info_control.camera.download_snapshot"
+          )}
+        </ha-progress-button>
+      </div>
     `;
   }
 
-  protected updated(changedProps: PropertyValues) {
-    if (!changedProps.has("stateObj")) {
-      return;
-    }
+  private async _downloadSnapshot(ev: CustomEvent) {
+    const button = ev.currentTarget as any;
+    this._waiting = true;
 
-    const oldState = changedProps.get("stateObj") as this["stateObj"];
-    const oldEntityId = oldState ? oldState.entity_id : undefined;
-    const curEntityId = this.stateObj ? this.stateObj.entity_id : undefined;
-
-    // Same entity, ignore.
-    if (curEntityId === oldEntityId) {
-      return;
-    }
-
-    if (
-      curEntityId &&
-      this.hass!.config.components.includes("stream") &&
-      supportsFeature(this.stateObj!, CAMERA_SUPPORT_STREAM)
-    ) {
-      // Fetch in background while we set up the video.
-      this._fetchCameraPrefs();
-    }
-  }
-
-  private async _fetchCameraPrefs() {
-    this._cameraPrefs = await fetchCameraPrefs(
-      this.hass!,
-      this.stateObj!.entity_id
-    );
-  }
-
-  private async _handleCheckboxChanged(ev) {
-    const checkbox = ev.currentTarget as PaperCheckboxElement;
     try {
-      this._cameraPrefs = await updateCameraPrefs(
-        this.hass!,
-        this.stateObj!.entity_id,
-        {
-          preload_stream: checkbox.checked!,
-        }
+      const result: Response | undefined = await this.hass.callApiRaw(
+        "GET",
+        `camera_proxy/${this.stateObj!.entity_id}`
       );
-    } catch (err) {
-      alert(err.message);
-      checkbox.checked = !checkbox.checked;
+
+      if (!result) {
+        throw new Error("No response from API");
+      }
+
+      const contentType = result.headers.get("content-type");
+      const ext = contentType === "image/png" ? "png" : "jpg";
+      const date = new Date().toLocaleString();
+      const filename = `snapshot_${slugify(this.stateObj!.entity_id)}_${date}.${ext}`;
+
+      const blob = await result.blob();
+      const url = window.URL.createObjectURL(blob);
+      fileDownload(url, filename);
+    } catch (_err) {
+      this._waiting = false;
+      button.actionError();
+      showToast(this, {
+        message: this.hass.localize(
+          "ui.dialogs.more_info_control.camera.failed_to_download"
+        ),
+      });
+      return;
     }
+
+    this._waiting = false;
+    button.actionSuccess();
   }
 
-  static get styles(): CSSResult {
-    return css`
-      paper-checkbox {
-        position: absolute;
-        top: 0;
-        right: 0;
-        background-color: var(--secondary-background-color);
-        padding: 5px;
-        border-bottom-left-radius: 6px;
-      }
-    `;
-  }
+  static styles = css`
+    :host {
+      display: block;
+    }
+
+    .actions {
+      width: 100%;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      box-sizing: border-box;
+      padding: 12px;
+      z-index: 1;
+      gap: 8px;
+    }
+  `;
 }
 
 customElements.define("more-info-camera", MoreInfoCamera);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "more-info-camera": MoreInfoCamera;
+  }
+}

@@ -1,121 +1,160 @@
-import {
-  html,
-  LitElement,
-  PropertyValues,
-  TemplateResult,
-  property,
-  customElement,
-} from "lit-element";
-import "@polymer/paper-icon-button/paper-icon-button";
-
-import stateIcon from "../../../common/entity/state_icon";
-import computeStateName from "../../../common/entity/compute_state_name";
-import applyThemesOnElement from "../../../common/dom/apply_themes_on_element";
-
-import "../../../components/ha-card";
-import "../../../components/ha-icon";
-import "../components/hui-warning";
-
+import { mdiDotsVertical } from "@mdi/js";
+import "@thomasloven/round-slider";
+import type { PropertyValues } from "lit";
+import { LitElement, css, html, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { classMap } from "lit/directives/class-map";
+import { styleMap } from "lit/directives/style-map";
+import { applyThemesOnElement } from "../../../common/dom/apply_themes_on_element";
 import { fireEvent } from "../../../common/dom/fire_event";
-import { styleMap } from "lit-html/directives/style-map";
-import { HomeAssistant, LightEntity } from "../../../types";
-import { LovelaceCard, LovelaceCardEditor } from "../types";
+import { computeStateName } from "../../../common/entity/compute_state_name";
+import { stateColorBrightness } from "../../../common/entity/state_color";
+import "../../../components/ha-card";
+import "../../../components/ha-icon-button";
+import "../../../components/ha-state-icon";
+import { UNAVAILABLE, isUnavailableState } from "../../../data/entity";
+import type { LightEntity } from "../../../data/light";
+import { lightSupportsBrightness } from "../../../data/light";
+import type { ActionHandlerEvent } from "../../../data/lovelace/action_handler";
+import type { HomeAssistant } from "../../../types";
+import { actionHandler } from "../common/directives/action-handler-directive";
+import { findEntities } from "../common/find-entities";
+import { handleAction } from "../common/handle-action";
+import { hasAction } from "../common/has-action";
 import { hasConfigOrEntityChanged } from "../common/has-changed";
-import { loadRoundslider } from "../../../resources/jquery.roundslider.ondemand";
-import { toggleEntity } from "../common/entity/toggle-entity";
-import { LightCardConfig } from "./types";
-
-const lightConfig = {
-  radius: 80,
-  step: 1,
-  circleShape: "pie",
-  startAngle: 315,
-  width: 5,
-  min: 1,
-  max: 100,
-  sliderType: "min-range",
-  lineCap: "round",
-  handleSize: "+12",
-  showTooltip: false,
-  animation: false,
-};
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { LovelaceCard, LovelaceCardEditor } from "../types";
+import type { LightCardConfig } from "./types";
 
 @customElement("hui-light-card")
 export class HuiLightCard extends LitElement implements LovelaceCard {
   public static async getConfigElement(): Promise<LovelaceCardEditor> {
-    await import(/* webpackChunkName: "hui-light-card-editor" */ "../editor/config-elements/hui-light-card-editor");
+    await import("../editor/config-elements/hui-light-card-editor");
     return document.createElement("hui-light-card-editor");
   }
-  public static getStubConfig(): object {
-    return {};
+
+  public static getStubConfig(
+    hass: HomeAssistant,
+    entities: string[],
+    entitiesFallback: string[]
+  ): LightCardConfig {
+    const includeDomains = ["light"];
+    const maxEntities = 1;
+    const foundEntities = findEntities(
+      hass,
+      maxEntities,
+      entities,
+      entitiesFallback,
+      includeDomains
+    );
+
+    return { type: "light", entity: foundEntities[0] || "" };
   }
 
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: LightCardConfig;
-
-  @property() private _roundSliderStyle?: TemplateResult;
-
-  @property() private _jQuery?: any;
+  @state() private _config?: LightCardConfig;
 
   private _brightnessTimout?: number;
 
   public getCardSize(): number {
-    return 2;
+    return 5;
   }
 
   public setConfig(config: LightCardConfig): void {
     if (!config.entity || config.entity.split(".")[0] !== "light") {
-      throw new Error("Specify an entity from within the light domain.");
+      throw new Error("Specify an entity from within the light domain");
     }
 
-    this._config = { theme: "default", ...config };
+    this._config = {
+      tap_action: { action: "toggle" },
+      hold_action: { action: "more-info" },
+      ...config,
+    };
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this.hass || !this._config) {
-      return html``;
+      return nothing;
     }
 
     const stateObj = this.hass.states[this._config!.entity] as LightEntity;
 
     if (!stateObj) {
       return html`
-        <hui-warning
-          >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
-          )}</hui-warning
-        >
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
       `;
     }
 
+    const brightness = Math.round(
+      ((stateObj.attributes.brightness || 0) / 255) * 100
+    );
+
+    const name = this._config.name ?? computeStateName(stateObj);
+
     return html`
-      ${this.renderStyle()}
       <ha-card>
-        <paper-icon-button
-          icon="hass:dots-vertical"
+        <ha-icon-button
           class="more-info"
-          @click="${this._handleMoreInfo}"
-        ></paper-icon-button>
-        <div id="light"></div>
-        <div id="tooltip">
-          <div class="icon-state">
-            <ha-icon
-              class="light-icon"
-              data-state="${stateObj.state}"
-              .icon="${stateIcon(stateObj)}"
-              style="${styleMap({
-                filter: this._computeBrightness(stateObj),
-                color: this._computeColor(stateObj),
-              })}"
-              @click="${this._handleTap}"
-            ></ha-icon>
-            <div class="brightness" @ha-click="${this._handleTap}"></div>
-            <div class="name">
-              ${this._config.name || computeStateName(stateObj)}
+          .label=${this.hass!.localize(
+            "ui.panel.lovelace.cards.show_more_info"
+          )}
+          .path=${mdiDotsVertical}
+          @click=${this._handleMoreInfo}
+          tabindex="0"
+        ></ha-icon-button>
+
+        <div class="content">
+          <div id="controls">
+            <div id="slider">
+              <!-- @ts-ignore Round-slider has no tag definition or exported type -->
+              <round-slider
+                min="1"
+                max="100"
+                .value=${brightness}
+                .disabled=${isUnavailableState(stateObj.state)}
+                @value-changing=${this._dragEvent}
+                @value-changed=${this._setBrightness}
+                style=${styleMap({
+                  visibility: lightSupportsBrightness(stateObj)
+                    ? "visible"
+                    : "hidden",
+                })}
+              ></round-slider>
+              <ha-icon-button
+                class="light-button ${classMap({
+                  "slider-center": lightSupportsBrightness(stateObj),
+                  "state-on": stateObj.state === "on",
+                  "state-unavailable": stateObj.state === UNAVAILABLE,
+                })}"
+                .disabled=${isUnavailableState(stateObj.state)}
+                style=${styleMap({
+                  filter: this._computeBrightness(stateObj),
+                  color: this._computeColor(stateObj),
+                })}
+                @action=${this._handleAction}
+                .actionHandler=${actionHandler({
+                  hasHold: hasAction(this._config!.hold_action),
+                  hasDoubleClick: hasAction(this._config!.double_tap_action),
+                })}
+                tabindex="0"
+              >
+                <ha-state-icon
+                  .icon=${this._config.icon}
+                  .stateObj=${stateObj}
+                  .hass=${this.hass}
+                ></ha-state-icon>
+              </ha-icon-button>
             </div>
+          </div>
+
+          <div id="info" .title=${name}>
+            ${isUnavailableState(stateObj.state)
+              ? html` <div>${this.hass.formatEntityState(stateObj)}</div> `
+              : html` <div class="brightness">%</div> `}
+            ${name}
           </div>
         </div>
       </ha-card>
@@ -126,35 +165,9 @@ export class HuiLightCard extends LitElement implements LovelaceCard {
     return hasConfigOrEntityChanged(this, changedProps);
   }
 
-  protected async firstUpdated(): Promise<void> {
-    const loaded = await loadRoundslider();
-
-    this._roundSliderStyle = loaded.roundSliderStyle;
-    this._jQuery = loaded.jQuery;
-
-    const stateObj = this.hass!.states[this._config!.entity] as LightEntity;
-
-    if (!stateObj) {
-      // Card will require refresh to work again
-      return;
-    }
-
-    const brightness = stateObj.attributes.brightness || 0;
-
-    this._jQuery("#light", this.shadowRoot).roundSlider({
-      ...lightConfig,
-      change: (value) => this._setBrightness(value),
-      drag: (value) => this._dragEvent(value),
-      start: () => this._showBrightness(),
-      stop: () => this._hideBrightness(),
-    });
-    this.shadowRoot!.querySelector(".brightness")!.innerHTML =
-      (Math.round((brightness / 254) * 100) || 0) + "%";
-  }
-
   protected updated(changedProps: PropertyValues): void {
     super.updated(changedProps);
-    if (!this._config || !this.hass || !this._jQuery) {
+    if (!this._config || !this.hass) {
       return;
     }
 
@@ -164,154 +177,26 @@ export class HuiLightCard extends LitElement implements LovelaceCard {
       return;
     }
 
-    const attrs = stateObj.attributes;
-
-    this._jQuery("#light", this.shadowRoot).roundSlider({
-      value: Math.round((attrs.brightness / 254) * 100) || 0,
-    });
-
     const oldHass = changedProps.get("hass") as HomeAssistant | undefined;
-    if (!oldHass || oldHass.themes !== this.hass.themes) {
+    const oldConfig = changedProps.get("_config") as
+      | LightCardConfig
+      | undefined;
+
+    if (
+      !oldHass ||
+      !oldConfig ||
+      oldHass.themes !== this.hass.themes ||
+      oldConfig.theme !== this._config.theme
+    ) {
       applyThemesOnElement(this, this.hass.themes, this._config.theme);
     }
   }
 
-  private renderStyle(): TemplateResult {
-    return html`
-      ${this._roundSliderStyle}
-      <style>
-        :host {
-          display: block;
-        }
-
-        ha-card {
-          position: relative;
-          overflow: hidden;
-          --brightness-font-color: white;
-          --brightness-font-text-shadow: -1px -1px 0 #000, 1px -1px 0 #000,
-            -1px 1px 0 #000, 1px 1px 0 #000;
-          --name-font-size: 1.2rem;
-          --brightness-font-size: 1.2rem;
-          --rail-border-color: transparent;
-        }
-
-        #tooltip {
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 100%;
-          text-align: center;
-          z-index: 15;
-        }
-
-        .icon-state {
-          display: block;
-          margin: auto;
-          width: 100%;
-          height: 100%;
-          transform: translate(0, 25%);
-        }
-
-        #light {
-          margin: 0 auto;
-          padding-top: 16px;
-          padding-bottom: 16px;
-        }
-
-        #light .rs-bar.rs-transition.rs-first,
-        .rs-bar.rs-transition.rs-second {
-          z-index: 20 !important;
-        }
-
-        #light .rs-range-color {
-          background-color: var(--primary-color);
-        }
-
-        #light .rs-path-color {
-          background-color: var(--disabled-text-color);
-        }
-
-        #light .rs-handle {
-          background-color: var(--paper-card-background-color, white);
-          padding: 7px;
-          border: 2px solid var(--disabled-text-color);
-        }
-
-        #light .rs-handle.rs-focus {
-          border-color: var(--primary-color);
-        }
-
-        #light .rs-handle:after {
-          border-color: var(--primary-color);
-          background-color: var(--primary-color);
-        }
-
-        #light .rs-border {
-          border-color: var(--rail-border-color);
-        }
-
-        #light .rs-inner.rs-bg-color.rs-border,
-        #light .rs-overlay.rs-transition.rs-bg-color {
-          background-color: var(--paper-card-background-color, white);
-        }
-
-        .light-icon {
-          margin: auto;
-          width: 76px;
-          height: 76px;
-          color: var(--paper-item-icon-color, #44739e);
-          cursor: pointer;
-        }
-
-        .light-icon[data-state="on"] {
-          color: var(--paper-item-icon-active-color, #fdd835);
-        }
-
-        .light-icon[data-state="unavailable"] {
-          color: var(--state-icon-unavailable-color);
-        }
-
-        .name {
-          padding-top: 40px;
-          font-size: var(--name-font-size);
-        }
-
-        .brightness {
-          font-size: var(--brightness-font-size);
-          position: absolute;
-          margin: 0 auto;
-          left: 50%;
-          top: 10%;
-          transform: translate(-50%);
-          opacity: 0;
-          transition: opacity 0.5s ease-in-out;
-          -moz-transition: opacity 0.5s ease-in-out;
-          -webkit-transition: opacity 0.5s ease-in-out;
-          cursor: pointer;
-          color: var(--brightness-font-color);
-          text-shadow: var(--brightness-font-text-shadow);
-          pointer-events: none;
-        }
-
-        .show_brightness {
-          opacity: 1;
-        }
-
-        .more-info {
-          position: absolute;
-          cursor: pointer;
-          top: 0;
-          right: 0;
-          z-index: 25;
-          color: var(--secondary-text-color);
-        }
-      </style>
-    `;
-  }
-
   private _dragEvent(e: any): void {
-    this.shadowRoot!.querySelector(".brightness")!.innerHTML = e.value + "%";
+    this.shadowRoot!.querySelector(".brightness")!.innerHTML =
+      `${e.detail.value} %`;
+    this._showBrightness();
+    this._hideBrightness();
   }
 
   private _showBrightness(): void {
@@ -332,31 +217,28 @@ export class HuiLightCard extends LitElement implements LovelaceCard {
   private _setBrightness(e: any): void {
     this.hass!.callService("light", "turn_on", {
       entity_id: this._config!.entity,
-      brightness_pct: e.value,
+      brightness_pct: e.detail.value,
     });
   }
 
   private _computeBrightness(stateObj: LightEntity): string {
-    if (!stateObj.attributes.brightness) {
+    if (stateObj.state === "off" || !stateObj.attributes.brightness) {
       return "";
     }
-    const brightness = stateObj.attributes.brightness;
-    return `brightness(${(brightness + 245) / 5}%)`;
+    return stateColorBrightness(stateObj);
   }
 
   private _computeColor(stateObj: LightEntity): string {
-    if (!stateObj.attributes.hs_color) {
+    if (stateObj.state === "off") {
       return "";
     }
-    const [hue, sat] = stateObj.attributes.hs_color;
-    if (sat <= 10) {
-      return "";
-    }
-    return `hsl(${hue}, 100%, ${100 - sat / 2}%)`;
+    return stateObj.attributes.rgb_color
+      ? `rgb(${stateObj.attributes.rgb_color.join(",")})`
+      : "";
   }
 
-  private _handleTap() {
-    toggleEntity(this.hass!, this._config!.entity!);
+  private _handleAction(ev: ActionHandlerEvent) {
+    handleAction(this, this.hass!, this._config!, ev.detail.action!);
   }
 
   private _handleMoreInfo() {
@@ -364,6 +246,101 @@ export class HuiLightCard extends LitElement implements LovelaceCard {
       entityId: this._config!.entity,
     });
   }
+
+  static styles = css`
+    ha-card {
+      height: 100%;
+      box-sizing: border-box;
+      position: relative;
+      overflow: hidden;
+      text-align: center;
+      --name-font-size: 1.2rem;
+      --brightness-font-size: 1.2rem;
+    }
+
+    .more-info {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      right: 0;
+      inset-inline-start: initial;
+      inset-inline-end: 0;
+      border-radius: 100%;
+      color: var(--secondary-text-color);
+      z-index: 1;
+      direction: var(--direction);
+    }
+
+    .content {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    #controls {
+      display: flex;
+      justify-content: center;
+      padding: 16px;
+      position: relative;
+    }
+
+    #slider {
+      height: 100%;
+      width: 100%;
+      position: relative;
+      max-width: 200px;
+      min-width: 100px;
+    }
+
+    round-slider {
+      --round-slider-path-color: var(--slider-track-color);
+      --round-slider-bar-color: var(--primary-color);
+      padding-bottom: 10%;
+    }
+
+    .light-button {
+      color: var(--paper-item-icon-color, #44739e);
+      width: 60%;
+      height: auto;
+      position: absolute;
+      max-width: calc(100% - 40px);
+      box-sizing: border-box;
+      border-radius: 100%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      --mdc-icon-button-size: 100%;
+      --mdc-icon-size: 100%;
+    }
+
+    .light-button.state-on {
+      color: var(--state-light-active-color);
+    }
+
+    .light-button.state-unavailable {
+      color: var(--state-unavailable-color);
+    }
+
+    #info {
+      text-align: center;
+      margin-top: -56px;
+      padding: 16px;
+      font-size: var(--name-font-size);
+    }
+
+    .brightness {
+      font-size: var(--brightness-font-size);
+      opacity: 0;
+      transition: opacity 0.5s ease-in-out;
+      -moz-transition: opacity 0.5s ease-in-out;
+      -webkit-transition: opacity 0.5s ease-in-out;
+    }
+
+    .show_brightness {
+      opacity: 1;
+    }
+  `;
 }
 
 declare global {

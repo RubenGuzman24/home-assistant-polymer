@@ -1,63 +1,78 @@
-import "@polymer/paper-icon-button/paper-icon-button";
-import "@polymer/paper-toggle-button/paper-toggle-button";
-
+import { mdiFlash, mdiFlashOff } from "@mdi/js";
+import type { HassEntity } from "home-assistant-js-websocket";
+import type { PropertyValues, TemplateResult } from "lit";
+import { LitElement, css, html } from "lit";
+import { customElement, property, state } from "lit/decorators";
 import { STATES_OFF } from "../../common/const";
-import computeStateDomain from "../../common/entity/compute_state_domain";
-import {
-  LitElement,
-  TemplateResult,
-  html,
-  CSSResult,
-  css,
-  property,
-  PropertyValues,
-} from "lit-element";
-import { HomeAssistant } from "../../types";
-import { HassEntity } from "home-assistant-js-websocket";
+import { computeStateDomain } from "../../common/entity/compute_state_domain";
+import { computeStateName } from "../../common/entity/compute_state_name";
+import { UNAVAILABLE, UNKNOWN, isUnavailableState } from "../../data/entity";
 import { forwardHaptic } from "../../data/haptics";
-import computeStateName from "../../common/entity/compute_state_name";
+import type { HomeAssistant } from "../../types";
+import "../ha-formfield";
+import "../ha-icon-button";
+import "../ha-switch";
 
 const isOn = (stateObj?: HassEntity) =>
-  stateObj !== undefined && !STATES_OFF.includes(stateObj.state);
+  stateObj !== undefined &&
+  !STATES_OFF.includes(stateObj.state) &&
+  !isUnavailableState(stateObj.state);
 
-class HaEntityToggle extends LitElement {
+@customElement("ha-entity-toggle")
+export class HaEntityToggle extends LitElement {
   // hass is not a property so that we only re-render on stateObj changes
   public hass?: HomeAssistant;
-  @property() public stateObj?: HassEntity;
-  @property() private _isOn: boolean = false;
 
-  protected render(): TemplateResult | void {
+  @property({ attribute: false }) public stateObj?: HassEntity;
+
+  @property() public label?: string;
+
+  @state() private _isOn = false;
+
+  protected render(): TemplateResult {
     if (!this.stateObj) {
+      return html` <ha-switch disabled></ha-switch> `;
+    }
+
+    if (
+      this.stateObj.attributes.assumed_state ||
+      this.stateObj.state === UNKNOWN
+    ) {
       return html`
-        <paper-toggle-button disabled></paper-toggle-button>
+        <ha-icon-button
+          .label=${`Turn ${computeStateName(this.stateObj)} off`}
+          .path=${mdiFlashOff}
+          .disabled=${this.stateObj.state === UNAVAILABLE}
+          @click=${this._turnOff}
+          class=${!this._isOn && this.stateObj.state !== UNKNOWN
+            ? "state-active"
+            : ""}
+        ></ha-icon-button>
+        <ha-icon-button
+          .label=${`Turn ${computeStateName(this.stateObj)} on`}
+          .path=${mdiFlash}
+          .disabled=${this.stateObj.state === UNAVAILABLE}
+          @click=${this._turnOn}
+          class=${this._isOn ? "state-active" : ""}
+        ></ha-icon-button>
       `;
     }
 
-    if (this.stateObj.attributes.assumed_state) {
-      return html`
-        <paper-icon-button
-          aria-label=${`Turn ${computeStateName(this.stateObj)} off`}
-          icon="hass:flash-off"
-          @click=${this._turnOff}
-          ?state-active=${!this._isOn}
-        ></paper-icon-button>
-        <paper-icon-button
-          aria-label=${`Turn ${computeStateName(this.stateObj)} on`}
-          icon="hass:flash"
-          @click=${this._turnOn}
-          ?state-active=${this._isOn}
-        ></paper-icon-button>
-      `;
+    const switchTemplate = html`<ha-switch
+      aria-label=${`Toggle ${computeStateName(this.stateObj)} ${
+        this._isOn ? "off" : "on"
+      }`}
+      .checked=${this._isOn}
+      .disabled=${this.stateObj.state === UNAVAILABLE}
+      @change=${this._toggleChanged}
+    ></ha-switch>`;
+
+    if (!this.label) {
+      return switchTemplate;
     }
 
     return html`
-      <paper-toggle-button
-        aria-label=${`Toggle ${computeStateName(this.stateObj)} ${
-          this._isOn ? "off" : "on"
-        }`}
-        .checked=${this._isOn}
-        @change=${this._toggleChanged}
-      ></paper-toggle-button>
+      <ha-formfield .label=${this.label}>${switchTemplate}</ha-formfield>
     `;
   }
 
@@ -66,7 +81,8 @@ class HaEntityToggle extends LitElement {
     this.addEventListener("click", (ev) => ev.stopPropagation());
   }
 
-  protected updated(changedProps: PropertyValues): void {
+  public willUpdate(changedProps: PropertyValues): void {
+    super.willUpdate(changedProps);
     if (changedProps.has("stateObj")) {
       this._isOn = isOn(this.stateObj);
     }
@@ -107,6 +123,9 @@ class HaEntityToggle extends LitElement {
     } else if (stateDomain === "cover") {
       serviceDomain = "cover";
       service = turnOn ? "open_cover" : "close_cover";
+    } else if (stateDomain === "valve") {
+      serviceDomain = "valve";
+      service = turnOn ? "open_valve" : "close_valve";
     } else if (stateDomain === "group") {
       serviceDomain = "homeassistant";
       service = turnOn ? "turn_on" : "turn_off";
@@ -133,30 +152,27 @@ class HaEntityToggle extends LitElement {
     }, 2000);
   }
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        white-space: nowrap;
-        min-width: 38px;
-      }
-      paper-icon-button {
-        color: var(
-          --paper-icon-button-inactive-color,
-          var(--primary-text-color)
-        );
-        transition: color 0.5s;
-      }
-      paper-icon-button[state-active] {
-        color: var(--paper-icon-button-active-color, var(--primary-color));
-      }
-      paper-toggle-button {
-        cursor: pointer;
-        --paper-toggle-button-label-spacing: 0;
-        padding: 13px 5px;
-        margin: -4px -5px;
-      }
-    `;
-  }
+  static styles = css`
+    :host {
+      white-space: nowrap;
+      min-width: 38px;
+    }
+    ha-icon-button {
+      --mdc-icon-button-size: 40px;
+      color: var(--ha-icon-button-inactive-color, var(--primary-text-color));
+      transition: color 0.5s;
+    }
+    ha-icon-button.state-active {
+      color: var(--ha-icon-button-active-color, var(--primary-color));
+    }
+    ha-switch {
+      padding: 13px 5px;
+    }
+  `;
 }
 
-customElements.define("ha-entity-toggle", HaEntityToggle);
+declare global {
+  interface HTMLElementTagNameMap {
+    "ha-entity-toggle": HaEntityToggle;
+  }
+}

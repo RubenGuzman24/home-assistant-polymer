@@ -1,9 +1,9 @@
-import { UpdatingElement, property, PropertyValues } from "lit-element";
-import "./hass-error-screen";
-import "./hass-loading-screen";
-import { Route } from "../types";
-import { navigate } from "../common/navigate";
+import type { PropertyValues } from "lit";
+import { ReactiveElement } from "lit";
+import { property } from "lit/decorators";
 import memoizeOne from "memoize-one";
+import { navigate } from "../common/navigate";
+import type { Route } from "../types";
 
 const extractPage = (path: string, defaultPage: string) => {
   if (path === "") {
@@ -37,24 +37,25 @@ export interface RouterOptions {
   // Hook that is called before rendering a new route. Allowing redirects.
   // If string returned, that page will be rendered instead.
   beforeRender?: (page: string) => string | undefined;
-  routes: {
-    // If it's a string, it is another route whose options should be adopted.
-    [route: string]: RouteOptions | string;
-  };
+  routes: Record<string, RouteOptions | string>;
 }
 
 // Time to wait for code to load before we show loading screen.
 const LOADING_SCREEN_THRESHOLD = 400; // ms
 
-export class HassRouterPage extends UpdatingElement {
-  @property() public route?: Route;
+export class HassRouterPage extends ReactiveElement {
+  @property({ attribute: false }) public route?: Route;
 
   protected routerOptions!: RouterOptions;
 
   protected _currentPage = "";
+
   private _currentLoadProm?: Promise<void>;
+
   private _cache = {};
+
   private _initialLoadDone = false;
+
   private _computeTail = memoizeOne((route: Route) => {
     const dividerPos = route.path.indexOf("/", 1);
     return dividerPos === -1
@@ -67,6 +68,10 @@ export class HassRouterPage extends UpdatingElement {
           path: route.path.substr(dividerPos),
         };
   });
+
+  protected createRenderRoot() {
+    return this;
+  }
 
   protected update(changedProps: PropertyValues) {
     super.update(changedProps);
@@ -90,7 +95,10 @@ export class HassRouterPage extends UpdatingElement {
     const defaultPage = routerOptions.defaultPage;
 
     if (route && route.path === "" && defaultPage !== undefined) {
-      navigate(this, `${route.prefix}/${defaultPage}`, true);
+      const queryParams = window.location.search;
+      navigate(`${route.prefix}/${defaultPage}${queryParams}`, {
+        replace: true,
+      });
     }
 
     let newPage = route
@@ -118,7 +126,9 @@ export class HassRouterPage extends UpdatingElement {
 
         // Update the url if we know where we're mounted.
         if (route) {
-          navigate(this, `${route.prefix}/${result}`, true);
+          navigate(`${route.prefix}/${result}${location.search}`, {
+            replace: true,
+          });
         }
       }
     }
@@ -143,9 +153,11 @@ export class HassRouterPage extends UpdatingElement {
       ? routeOptions.load()
       : Promise.resolve();
 
+    let showLoadingScreenTimeout: undefined | number;
+
     // Check when loading the page source failed.
     loadProm.catch((err) => {
-      // tslint:disable-next-line
+      // eslint-disable-next-line
       console.error("Error loading page", newPage, err);
 
       // Verify that we're still trying to show the same page.
@@ -154,12 +166,18 @@ export class HassRouterPage extends UpdatingElement {
       }
 
       // Removes either loading screen or the panel
-      this.removeChild(this.lastChild!);
+      if (this.lastChild) {
+        this.removeChild(this.lastChild!);
+      }
+
+      if (showLoadingScreenTimeout) {
+        clearTimeout(showLoadingScreenTimeout);
+      }
 
       // Show error screen
-      const errorEl = document.createElement("hass-error-screen");
-      errorEl.error = `Error while loading page ${newPage}.`;
-      this.appendChild(errorEl);
+      this.appendChild(
+        this.createErrorScreen(`Error while loading page ${newPage}.`)
+      );
     });
 
     // If we don't show loading screen, just show the panel.
@@ -173,7 +191,7 @@ export class HassRouterPage extends UpdatingElement {
     // That way we won't have a double fast flash on fast connections.
     let created = false;
 
-    setTimeout(() => {
+    showLoadingScreenTimeout = window.setTimeout(() => {
       if (created || this._currentPage !== newPage) {
         return;
       }
@@ -237,7 +255,15 @@ export class HassRouterPage extends UpdatingElement {
   }
 
   protected createLoadingScreen() {
+    import("./hass-loading-screen");
     return document.createElement("hass-loading-screen");
+  }
+
+  protected createErrorScreen(error: string) {
+    import("./hass-error-screen");
+    const errorEl = document.createElement("hass-error-screen");
+    errorEl.error = error;
+    return errorEl;
   }
 
   /**

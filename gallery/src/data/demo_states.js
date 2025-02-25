@@ -36,7 +36,7 @@ export default {
     attributes: {
       title: "Welcome Home!",
       message:
-        "Here are some resources to get started:\n\n - [Configuring Home Assistant](https://home-assistant.io/getting-started/configuration/)\n - [Available components](https://home-assistant.io/components/)\n - [Troubleshooting your configuration](https://home-assistant.io/docs/configuration/troubleshooting/)\n - [Getting help](https://home-assistant.io/help/)\n\nTo not see this card popup in the future, edit your config in\n`configuration.yaml` and disable the `introduction` component.",
+        "Here are some resources to get started:\n\n - [Configuring Home Assistant](https://home-assistant.io/getting-started/configuration/)\n - [Available integrations](https://home-assistant.io/integrations/)\n - [Troubleshooting your configuration](https://home-assistant.io/docs/configuration/troubleshooting/)\n - [Getting help](https://home-assistant.io/help/)\n\nTo not see this card popup in the future, edit your config in\n`configuration.yaml` and disable the `introduction` integration.",
     },
     last_changed: "2018-07-19T10:44:45.922241+00:00",
     last_updated: "2018-07-19T10:44:45.922241+00:00",
@@ -420,15 +420,6 @@ export default {
     last_changed: "2018-07-19T10:44:46.105940+00:00",
     last_updated: "2018-07-19T10:44:46.105940+00:00",
   },
-  "weblink.router": {
-    entity_id: "weblink.router",
-    state: "http://192.168.1.1",
-    attributes: {
-      friendly_name: "Router",
-    },
-    last_changed: "2018-07-19T10:44:46.107286+00:00",
-    last_updated: "2018-07-19T10:44:46.107286+00:00",
-  },
   "group.all_plants": {
     entity_id: "group.all_plants",
     state: "ok",
@@ -518,7 +509,7 @@ export default {
       away_mode: "on",
       aux_heat: "off",
       unit_of_measurement: "°C",
-      friendly_name: "Hvac",
+      friendly_name: "HVAC",
       supported_features: 3833,
     },
     last_changed: "2018-07-19T10:44:46.200650+00:00",
@@ -540,15 +531,6 @@ export default {
     },
     last_changed: "2018-07-19T10:44:46.200946+00:00",
     last_updated: "2018-07-19T10:44:46.200946+00:00",
-  },
-  "mailbox.demomailbox": {
-    entity_id: "mailbox.demomailbox",
-    state: "10",
-    attributes: {
-      friendly_name: "DemoMailbox",
-    },
-    last_changed: "2018-07-19T10:45:16.555210+00:00",
-    last_updated: "2018-07-19T10:45:16.555210+00:00",
   },
   "input_select.living_room_preset": {
     entity_id: "input_select.living_room_preset",
@@ -1089,18 +1071,6 @@ export default {
     },
     last_changed: "2018-07-19T10:44:46.510448+00:00",
     last_updated: "2018-07-19T10:44:46.510448+00:00",
-  },
-  "history_graph.recent_switches": {
-    entity_id: "history_graph.recent_switches",
-    state: "unknown",
-    attributes: {
-      hours_to_show: 1,
-      refresh: 60,
-      entity_id: ["switch.ac", "switch.decorative_lights"],
-      friendly_name: "Recent Switches",
-    },
-    last_changed: "2018-07-19T10:44:46.512351+00:00",
-    last_updated: "2018-07-19T10:44:46.512351+00:00",
   },
   "scene.switch_on_and_off": {
     entity_id: "scene.switch_on_and_off",

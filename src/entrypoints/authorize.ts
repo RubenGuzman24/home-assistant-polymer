@@ -1,15 +1,8 @@
-import "@polymer/polymer/lib/elements/dom-if";
-import "@polymer/polymer/lib/elements/dom-repeat";
-
-import "../components/ha-iconset-svg";
-import "../resources/ha-style";
-import "../resources/roboto";
-
+// Compat needs to be first import
+import "../resources/compatibility";
 import "../auth/ha-authorize";
 
-/* polyfill for paper-dropdown */
-setTimeout(
-  () =>
-    import(/* webpackChunkName: "polyfill-web-animations-next" */ "web-animations-js/web-animations-next-lite.min"),
-  2000
+import("../resources/ha-style");
+import("@polymer/polymer/lib/utils/settings").then(
+  ({ setCancelSyntheticClickEvents }) => setCancelSyntheticClickEvents(false)
 );

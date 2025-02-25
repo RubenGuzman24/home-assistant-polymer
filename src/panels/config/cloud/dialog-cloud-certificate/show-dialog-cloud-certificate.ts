@@ -1,5 +1,5 @@
 import { fireEvent } from "../../../../common/dom/fire_event";
-import { CertificateInformation } from "../../../../data/cloud";
+import type { CertificateInformation } from "../../../../data/cloud";
 
 export interface CloudCertificateParams {
   certificateInfo: CertificateInformation;
@@ -11,8 +11,7 @@ export const showCloudCertificateDialog = (
 ): void => {
   fireEvent(element, "show-dialog", {
     dialogTag: "dialog-cloud-certificate",
-    dialogImport: () =>
-      import(/* webpackChunkName: "dialog-cloud-certificate" */ "./dialog-cloud-certificate"),
+    dialogImport: () => import("./dialog-cloud-certificate"),
     dialogParams: webhookDialogParams,
   });
 };

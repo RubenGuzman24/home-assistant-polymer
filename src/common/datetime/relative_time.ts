@@ -1,52 +1,25 @@
-import { LocalizeFunc } from "../translations/localize";
+import memoizeOne from "memoize-one";
+import type { FrontendLocaleData } from "../../data/translation";
+import { selectUnit } from "../util/select-unit";
 
-/**
- * Calculate a string representing a date object as relative time from now.
- *
- * Example output: 5 minutes ago, in 3 days.
- */
-const tests = [60, 60, 24, 7];
-const langKey = ["second", "minute", "hour", "day"];
+const formatRelTimeMem = memoizeOne(
+  (locale: FrontendLocaleData) =>
+    new Intl.RelativeTimeFormat(locale.language, { numeric: "auto" })
+);
 
-export default function relativeTime(
-  dateObj: Date,
-  localize: LocalizeFunc,
-  options: {
-    compareTime?: Date;
-    includeTense?: boolean;
-  } = {}
-): string {
-  const compareTime = options.compareTime || new Date();
-  let delta = (compareTime.getTime() - dateObj.getTime()) / 1000;
-  const tense = delta >= 0 ? "past" : "future";
-  delta = Math.abs(delta);
-
-  let timeDesc;
-
-  for (let i = 0; i < tests.length; i++) {
-    if (delta < tests[i]) {
-      delta = Math.floor(delta);
-      timeDesc = localize(
-        `ui.components.relative_time.duration.${langKey[i]}`,
-        "count",
-        delta
-      );
-      break;
-    }
-
-    delta /= tests[i];
+export const relativeTime = (
+  from: Date,
+  locale: FrontendLocaleData,
+  to?: Date,
+  includeTense = true
+): string => {
+  const diff = selectUnit(from, to, locale);
+  if (includeTense) {
+    return formatRelTimeMem(locale).format(diff.value, diff.unit);
   }
-
-  if (timeDesc === undefined) {
-    delta = Math.floor(delta);
-    timeDesc = localize(
-      "ui.components.relative_time.duration.week",
-      "count",
-      delta
-    );
-  }
-
-  return options.includeTense === false
-    ? timeDesc
-    : localize(`ui.components.relative_time.${tense}`, "time", timeDesc);
-}
+  return Intl.NumberFormat(locale.language, {
+    style: "unit",
+    unit: diff.unit,
+    unitDisplay: "long",
+  }).format(Math.abs(diff.value));
+};

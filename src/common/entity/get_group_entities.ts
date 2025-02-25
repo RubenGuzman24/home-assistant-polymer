@@ -1,10 +1,10 @@
-import { HassEntities } from "home-assistant-js-websocket";
-import { GroupEntity } from "../../types";
+import type { HassEntities } from "home-assistant-js-websocket";
+import type { GroupEntity } from "../../data/group";
 
-export default function getGroupEntities(
+export const getGroupEntities = (
   entities: HassEntities,
   group: GroupEntity
-) {
+) => {
   const result = {};
 
   group.attributes.entity_id.forEach((entityId) => {
@@ -16,4 +16,4 @@ export default function getGroupEntities(
   });
 
   return result;
-}
+};

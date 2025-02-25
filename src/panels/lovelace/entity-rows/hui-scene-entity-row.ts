@@ -1,31 +1,26 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  CSSResult,
-  css,
-  property,
-  customElement,
-  PropertyValues,
-} from "lit-element";
-
-import "../components/hui-generic-entity-row";
+import "@material/mwc-button/mwc-button";
+import type { PropertyValues } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
 import "../../../components/entity/ha-entity-toggle";
-import "../components/hui-warning";
-
-import { HomeAssistant } from "../../../types";
-import { EntityRow, EntityConfig } from "./types";
+import { UNAVAILABLE } from "../../../data/entity";
+import { activateScene } from "../../../data/scene";
+import type { HomeAssistant } from "../../../types";
 import { hasConfigOrEntityChanged } from "../common/has-changed";
+import "../components/hui-generic-entity-row";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { ActionRowConfig, LovelaceRow } from "./types";
+import { confirmAction } from "../common/confirm-action";
 
 @customElement("hui-scene-entity-row")
-class HuiSceneEntityRow extends LitElement implements EntityRow {
-  @property() public hass?: HomeAssistant;
+class HuiSceneEntityRow extends LitElement implements LovelaceRow {
+  @property({ attribute: false }) public hass!: HomeAssistant;
 
-  @property() private _config?: EntityConfig;
+  @state() private _config?: ActionRowConfig;
 
-  public setConfig(config: EntityConfig): void {
+  public setConfig(config: ActionRowConfig): void {
     if (!config) {
-      throw new Error("Configuration error");
+      throw new Error("Invalid configuration");
     }
     this._config = config;
   }
@@ -34,56 +29,56 @@ class HuiSceneEntityRow extends LitElement implements EntityRow {
     return hasConfigOrEntityChanged(this, changedProps);
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
 
     const stateObj = this.hass.states[this._config.entity];
 
     if (!stateObj) {
       return html`
-        <hui-warning
-          >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
-          )}</hui-warning
-        >
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
       `;
     }
 
     return html`
-      <hui-generic-entity-row .hass="${this.hass}" .config="${this._config}">
-        ${stateObj.attributes.can_cancel
-          ? html`
-              <ha-entity-toggle
-                .hass="${this.hass}"
-                .stateObj="${stateObj}"
-              ></ha-entity-toggle>
-            `
-          : html`
-              <mwc-button @click="${this._callService}">
-                ${this.hass!.localize("ui.card.scene.activate")}
-              </mwc-button>
-            `}
+      <hui-generic-entity-row .hass=${this.hass} .config=${this._config}>
+        <mwc-button
+          @click=${this._callService}
+          .disabled=${stateObj.state === UNAVAILABLE}
+          class="text-content"
+        >
+          ${this._config.action_name ||
+          this.hass!.localize("ui.card.scene.activate")}
+        </mwc-button>
       </hui-generic-entity-row>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      mwc-button {
-        margin-right: -0.57em;
-      }
-    `;
-  }
+  static styles = css`
+    mwc-button {
+      margin-right: -0.57em;
+      margin-inline-end: -0.57em;
+      margin-inline-start: initial;
+    }
+  `;
 
-  private _callService(ev): void {
+  private async _callService(ev: Event): Promise<void> {
     ev.stopPropagation();
-    this.hass!.callService("scene", "turn_on", {
-      entity_id: this._config!.entity,
-    });
+    if (
+      !this._config?.confirmation ||
+      (await confirmAction(
+        this,
+        this.hass,
+        this._config.confirmation,
+        this._config.action_name || this.hass.localize("ui.card.scene.activate")
+      ))
+    ) {
+      activateScene(this.hass, this._config!.entity);
+    }
   }
 }
 

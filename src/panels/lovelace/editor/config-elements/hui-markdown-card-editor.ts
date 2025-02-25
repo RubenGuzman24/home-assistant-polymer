@@ -1,95 +1,126 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-} from "lit-element";
-import "@polymer/paper-input/paper-input";
-import "@polymer/paper-input/paper-textarea";
-
-import { struct } from "../../common/structs/struct";
-import { EntitiesEditorEvent, EditorTarget } from "../types";
-import { HomeAssistant } from "../../../../types";
-import { LovelaceCardEditor } from "../../types";
+import { html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import memoizeOne from "memoize-one";
+import { assert, assign, boolean, object, optional, string } from "superstruct";
 import { fireEvent } from "../../../../common/dom/fire_event";
-import { configElementStyle } from "./config-elements-style";
-import { MarkdownCardConfig } from "../../cards/types";
+import type { LocalizeFunc } from "../../../../common/translations/localize";
+import "../../../../components/ha-form/ha-form";
+import type {
+  HaFormSchema,
+  SchemaUnion,
+} from "../../../../components/ha-form/types";
+import type { HomeAssistant } from "../../../../types";
+import type { MarkdownCardConfig } from "../../cards/types";
+import type { LovelaceCardEditor } from "../../types";
+import { baseLovelaceCardConfig } from "../structs/base-card-struct";
 
-const cardConfigStruct = struct({
-  type: "string",
-  title: "string?",
-  content: "string",
-});
+const cardConfigStruct = assign(
+  baseLovelaceCardConfig,
+  object({
+    text_only: optional(boolean()),
+    title: optional(string()),
+    content: string(),
+  })
+);
 
 @customElement("hui-markdown-card-editor")
-export class HuiMarkdownCardEditor extends LitElement
-  implements LovelaceCardEditor {
-  @property() public hass?: HomeAssistant;
+export class HuiMarkdownCardEditor
+  extends LitElement
+  implements LovelaceCardEditor
+{
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: MarkdownCardConfig;
+  @state() private _config?: MarkdownCardConfig;
 
   public setConfig(config: MarkdownCardConfig): void {
-    config = cardConfigStruct(config);
+    assert(config, cardConfigStruct);
     this._config = config;
   }
 
-  get _title(): string {
-    return this._config!.title || "";
-  }
+  private _schema = memoizeOne(
+    (localize: LocalizeFunc, text_only: boolean) =>
+      [
+        {
+          name: "style",
+          required: true,
+          selector: {
+            select: {
+              mode: "box",
+              options: ["card", "text-only"].map((style) => ({
+                label: localize(
+                  `ui.panel.lovelace.editor.card.markdown.style_options.${style}`
+                ),
+                image: {
+                  src: `/static/images/form/markdown_${style.replace("-", "_")}.svg`,
+                  src_dark: `/static/images/form/markdown_${style.replace("-", "_")}_dark.svg`,
+                  flip_rtl: true,
+                },
+                value: style,
+              })),
+            },
+          },
+        },
+        ...(!text_only
+          ? ([{ name: "title", selector: { text: {} } }] as const)
+          : []),
+        { name: "content", required: true, selector: { template: {} } },
+      ] as const satisfies HaFormSchema[]
+  );
 
-  get _content(): string {
-    return this._config!.content || "";
-  }
-
-  protected render(): TemplateResult | void {
-    if (!this.hass) {
-      return html``;
+  protected render() {
+    if (!this.hass || !this._config) {
+      return nothing;
     }
 
+    const data = {
+      ...this._config,
+      style: this._config.text_only ? "text-only" : "card",
+    };
+
+    const schema = this._schema(
+      this.hass.localize,
+      this._config.text_only || false
+    );
+
     return html`
-      ${configElementStyle}
-      <div class="card-config">
-        <paper-input
-          label="Title"
-          .value="${this._title}"
-          .configValue="${"title"}"
-          @value-changed="${this._valueChanged}"
-        ></paper-input>
-        <paper-textarea
-          label="Content"
-          .value="${this._content}"
-          .configValue="${"content"}"
-          @value-changed="${this._valueChanged}"
-          autocapitalize="none"
-          autocomplete="off"
-          spellcheck="false"
-        ></paper-textarea>
-      </div>
+      <ha-form
+        .hass=${this.hass}
+        .data=${data}
+        .schema=${schema}
+        .computeLabel=${this._computeLabelCallback}
+        @value-changed=${this._valueChanged}
+      ></ha-form>
     `;
   }
 
-  private _valueChanged(ev: EntitiesEditorEvent): void {
-    if (!this._config || !this.hass) {
-      return;
-    }
-    const target = ev.target! as EditorTarget;
+  private _valueChanged(ev: CustomEvent): void {
+    const config = { ...ev.detail.value };
 
-    if (this[`_${target.configValue}`] === target.value) {
-      return;
+    if (config.style === "text-only") {
+      config.text_only = true;
+    } else {
+      delete config.text_only;
     }
-    if (target.configValue) {
-      if (target.value === "") {
-        delete this._config[target.configValue!];
-      } else {
-        this._config = {
-          ...this._config,
-          [target.configValue!]: target.value,
-        };
-      }
-    }
-    fireEvent(this, "config-changed", { config: this._config });
+    delete config.style;
+
+    fireEvent(this, "config-changed", { config });
   }
+
+  private _computeLabelCallback = (
+    schema: SchemaUnion<ReturnType<typeof this._schema>>
+  ) => {
+    switch (schema.name) {
+      case "style":
+      case "content":
+        return this.hass!.localize(
+          `ui.panel.lovelace.editor.card.markdown.${schema.name}`
+        );
+      default:
+        return this.hass!.localize(
+          `ui.panel.lovelace.editor.card.generic.${schema.name}`
+        );
+    }
+  };
 }
 
 declare global {

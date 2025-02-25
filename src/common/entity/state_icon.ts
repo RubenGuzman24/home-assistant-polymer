@@ -1,34 +1,42 @@
-/** Return an icon representing a state. */
-import { HassEntity } from "home-assistant-js-websocket";
-import { DEFAULT_DOMAIN_ICON } from "../const";
+import type { HassEntity } from "home-assistant-js-websocket";
+import { computeStateDomain } from "./compute_state_domain";
+import { updateIcon } from "./update_icon";
+import { deviceTrackerIcon } from "./device_tracker_icon";
+import { batteryIcon } from "./battery_icon";
 
-import computeDomain from "./compute_domain";
-import domainIcon from "./domain_icon";
+export const stateIcon = (
+  stateObj: HassEntity,
+  state?: string
+): string | undefined => {
+  const domain = computeStateDomain(stateObj);
+  const compareState = state ?? stateObj.state;
+  const dc = stateObj.attributes.device_class;
+  switch (domain) {
+    case "update":
+      return updateIcon(stateObj, compareState);
 
-import binarySensorIcon from "./binary_sensor_icon";
-import coverIcon from "./cover_icon";
-import sensorIcon from "./sensor_icon";
-import inputDateTimeIcon from "./input_dateteime_icon";
+    case "sensor":
+      if (dc === "battery") {
+        return batteryIcon(stateObj, compareState);
+      }
+      break;
 
-const domainIcons = {
-  binary_sensor: binarySensorIcon,
-  cover: coverIcon,
-  sensor: sensorIcon,
-  input_datetime: inputDateTimeIcon,
+    case "device_tracker":
+      return deviceTrackerIcon(stateObj, compareState);
+
+    case "sun":
+      return compareState === "above_horizon"
+        ? "mdi:white-balance-sunny"
+        : "mdi:weather-night";
+
+    case "input_datetime":
+      if (!stateObj.attributes.has_date) {
+        return "mdi:clock";
+      }
+      if (!stateObj.attributes.has_time) {
+        return "mdi:calendar";
+      }
+      break;
+  }
+  return undefined;
 };
-
-export default function stateIcon(state: HassEntity) {
-  if (!state) {
-    return DEFAULT_DOMAIN_ICON;
-  }
-  if (state.attributes.icon) {
-    return state.attributes.icon;
-  }
-
-  const domain = computeDomain(state.entity_id);
-
-  if (domain in domainIcons) {
-    return domainIcons[domain](state);
-  }
-  return domainIcon(domain, state.state);
-}

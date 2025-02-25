@@ -1,81 +1,104 @@
-import {
-  html,
-  LitElement,
-  css,
-  CSSResult,
-  customElement,
-  property,
-} from "lit-element";
-
 import "@material/mwc-button";
-import "../../../../components/dialog/ha-paper-dialog";
-// This is not a duplicate import, one is for types, one is for element.
-// tslint:disable-next-line
-import { HaPaperDialog } from "../../../../components/dialog/ha-paper-dialog";
-
-import { HomeAssistant } from "../../../../types";
-import { haStyle } from "../../../../resources/styles";
-import { CloudCertificateParams as CloudCertificateDialogParams } from "./show-dialog-cloud-certificate";
-import format_date_time from "../../../../common/datetime/format_date_time";
+import type { CSSResultGroup } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, state } from "lit/decorators";
+import { formatDateTime } from "../../../../common/datetime/format_date_time";
+import { fireEvent } from "../../../../common/dom/fire_event";
+import { createCloseHeading } from "../../../../components/ha-dialog";
+import { haStyleDialog } from "../../../../resources/styles";
+import type { HomeAssistant } from "../../../../types";
+import type { CloudCertificateParams as CloudCertificateDialogParams } from "./show-dialog-cloud-certificate";
 
 @customElement("dialog-cloud-certificate")
 class DialogCloudCertificate extends LitElement {
   public hass!: HomeAssistant;
 
-  @property()
-  private _params?: CloudCertificateDialogParams;
+  @state() private _params?: CloudCertificateDialogParams;
 
-  public async showDialog(params: CloudCertificateDialogParams) {
+  public showDialog(params: CloudCertificateDialogParams) {
     this._params = params;
-    // Wait till dialog is rendered.
-    await this.updateComplete;
-    this._dialog.open();
+  }
+
+  public closeDialog() {
+    this._params = undefined;
+    fireEvent(this, "dialog-closed", { dialog: this.localName });
   }
 
   protected render() {
     if (!this._params) {
-      return html``;
+      return nothing;
     }
     const { certificateInfo } = this._params;
 
     return html`
-      <ha-paper-dialog with-backdrop>
-        <h2>Certificate Information</h2>
+      <ha-dialog
+        open
+        hideActions
+        @closed=${this.closeDialog}
+        .heading=${createCloseHeading(
+          this.hass,
+          this.hass.localize(
+            "ui.panel.config.cloud.dialog_certificate.certificate_information"
+          )
+        )}
+      >
         <div>
           <p>
-            Certificate expiration date:
-            ${format_date_time(
+            ${this.hass!.localize(
+              "ui.panel.config.cloud.dialog_certificate.certificate_expiration_date"
+            )}
+            ${formatDateTime(
               new Date(certificateInfo.expire_date),
-              this.hass!.language
+              this.hass!.locale,
+              this.hass!.config
             )}<br />
-            (Will be automatically renewed)
+            (${this.hass!.localize(
+              "ui.panel.config.cloud.dialog_certificate.will_be_auto_renewed"
+            )})
           </p>
-          <p>
-            Certificate fingerprint: ${certificateInfo.fingerprint}
+          <p class="break-word">
+            ${this.hass!.localize(
+              "ui.panel.config.cloud.dialog_certificate.fingerprint"
+            )}
+            ${certificateInfo.fingerprint}
           </p>
+          <p class="break-word">
+            ${this.hass!.localize(
+              "ui.panel.config.cloud.dialog_certificate.alternative_names"
+            )}
+          </p>
+          <ul>
+            ${certificateInfo.alternative_names.map(
+              (name) => html`<li><code>${name}</code></li>`
+            )}
+          </ul>
         </div>
 
-        <div class="paper-dialog-buttons">
-          <mwc-button @click="${this._closeDialog}">CLOSE</mwc-button>
-        </div>
-      </ha-paper-dialog>
+        <mwc-button @click=${this.closeDialog} slot="primaryAction">
+          ${this.hass!.localize(
+            "ui.panel.config.cloud.dialog_certificate.close"
+          )}
+        </mwc-button>
+      </ha-dialog>
     `;
   }
 
-  private get _dialog(): HaPaperDialog {
-    return this.shadowRoot!.querySelector("ha-paper-dialog")!;
-  }
-
-  private _closeDialog() {
-    this._dialog.close();
-  }
-
-  static get styles(): CSSResult[] {
+  static get styles(): CSSResultGroup {
     return [
-      haStyle,
+      haStyleDialog,
       css`
-        ha-paper-dialog {
-          width: 535px;
+        ha-dialog {
+          --mdc-dialog-max-width: 535px;
+        }
+        .break-word {
+          overflow-wrap: break-word;
+        }
+        p {
+          margin-top: 0;
+          margin-bottom: 12px;
+        }
+        p:last-child {
+          margin-bottom: 0;
         }
       `,
     ];

@@ -1,17 +1,17 @@
 import { fireEvent } from "../../../common/dom/fire_event";
-import { Person, PersonMutableParams } from "../../../data/person";
-import { User } from "../../../data/user";
+import type { Person, PersonMutableParams } from "../../../data/person";
+import type { User } from "../../../data/user";
 
 export interface PersonDetailDialogParams {
   entry?: Person;
   users: User[];
+  refreshUsers: () => void;
   createEntry: (values: PersonMutableParams) => Promise<unknown>;
   updateEntry: (updates: Partial<PersonMutableParams>) => Promise<unknown>;
   removeEntry: () => Promise<boolean>;
 }
 
-export const loadPersonDetailDialog = () =>
-  import(/* webpackChunkName: "person-detail-dialog" */ "./dialog-person-detail");
+export const loadPersonDetailDialog = () => import("./dialog-person-detail");
 
 export const showPersonDetailDialog = (
   element: HTMLElement,

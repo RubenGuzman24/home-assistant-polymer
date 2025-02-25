@@ -1,8 +1,17 @@
 import { convertEntities } from "../../../../src/fake_data/entity";
-import { DemoConfig } from "../types";
+import type { DemoConfig } from "../types";
 
 export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
   convertEntities({
+    "todo.shopping_list": {
+      entity_id: "todo.shopping_list",
+      state: "2",
+      attributes: {
+        supported_features: 15,
+        friendly_name: "Shopping List",
+        icon: "mdi:cart",
+      },
+    },
     "zone.anna": {
       entity_id: "zone.anna",
       state: "zoning",
@@ -59,7 +68,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       attributes: {
         hidden: true,
         radius: 50,
-        friendly_name: "Skolan",
+        friendly_name: "School",
         icon: "mdi:school",
       },
     },
@@ -101,7 +110,12 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
     "sensor.zwave_battery_front_door": {
       entity_id: "sensor.zwave_battery_front_door",
       state: "63",
-      attributes: { friendly_name: "Battery", icon: "mdi:battery-60" },
+      attributes: {
+        friendly_name: "Battery",
+        icon: "mdi:battery-60",
+        unit_of_measurement: "%",
+        device_class: "battery",
+      },
     },
     "sensor.oskar_devices": {
       entity_id: "sensor.oskar_devices",
@@ -132,7 +146,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       state: "73",
       attributes: {
         unit_of_measurement: "%",
-        friendly_name: "oskar batteri",
+        friendly_name: "Oskar battery",
         device_class: "battery",
       },
     },
@@ -141,7 +155,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       state: "88",
       attributes: {
         unit_of_measurement: "%",
-        friendly_name: "bella batteri",
+        friendly_name: "Bella battery",
         device_class: "battery",
       },
     },
@@ -149,7 +163,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       entity_id: "binary_sensor.unifi_camera",
       state: "off",
       attributes: {
-        friendly_name: "R\u00f6relsesensor kamera",
+        friendly_name: "Motion sensor camera",
         icon: "mdi:walk",
       },
     },
@@ -164,7 +178,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
     },
     "input_select.christmas_pattern": {
       entity_id: "input_select.christmas_pattern",
-      state: "None",
+      state: "Rainbow",
       attributes: {
         options: [
           "None",
@@ -186,7 +200,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
     },
     "input_select.christmas_palette": {
       entity_id: "input_select.christmas_palette",
-      state: "None",
+      state: "Party",
       attributes: {
         options: [
           "None",
@@ -457,7 +471,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       state: "0.0",
       attributes: {
         unit_of_measurement: "kB/s",
-        friendly_name: "Nedladdning",
+        friendly_name: "Downloading",
         icon: "mdi:file-download",
       },
     },
@@ -471,7 +485,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       state: "0.0",
       attributes: {
         unit_of_measurement: "kB/s",
-        friendly_name: "Uppladdning",
+        friendly_name: "Uploading",
         icon: "mdi:file-upload",
       },
     },
@@ -702,7 +716,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
           },
         ],
         cloudiness: 25,
-        friendly_name: "V\u00e4der",
+        friendly_name: "Weather",
       },
     },
     "binary_sensor.ubiquiti_switch": {
@@ -726,7 +740,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
         round_trip_time_max: "0.626",
         round_trip_time_mdev: "",
         round_trip_time_min: "0.358",
-        friendly_name: "Entr\u00e9 kamera",
+        friendly_name: "Entrance camera",
         device_class: "connectivity",
         icon: "mdi:cctv",
       },
@@ -792,7 +806,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       attributes: {
         battery_level: 34,
         on: true,
-        friendly_name: "altan_motion_sensor",
+        friendly_name: "Porch motion sensor",
         device_class: "motion",
       },
     },
@@ -802,7 +816,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       attributes: {
         battery_level: 88,
         on: true,
-        friendly_name: "Altand\u00f6rren sensor",
+        friendly_name: "Back door sensor",
         device_class: "opening",
         icon: "mdi:door",
       },
@@ -813,7 +827,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       attributes: {
         battery_level: 74,
         on: true,
-        friendly_name: "badrumssensor",
+        friendly_name: "Bathroom motion sensor",
         device_class: "motion",
       },
     },
@@ -824,7 +838,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
         battery_level: 47,
         on: true,
         dark: true,
-        friendly_name: "R\u00f6relsesensor k\u00e4llaren 1",
+        friendly_name: "Basement motion sensor",
         device_class: "motion",
         icon: "mdi:walk",
       },
@@ -836,7 +850,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
         battery_level: 60,
         on: true,
         dark: true,
-        friendly_name: "R\u00f6relsesensor tv\u00e4ttstugan",
+        friendly_name: "Laundy room motion sensor",
         device_class: "motion",
         icon: "mdi:walk",
       },
@@ -858,7 +872,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
       attributes: {
         battery_level: 60,
         on: true,
-        friendly_name: "R\u00f6relsesensor skafferiet",
+        friendly_name: "Pantry motion sensor",
         device_class: "motion",
         icon: "mdi:walk",
       },
@@ -870,7 +884,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
         battery_level: 60,
         on: true,
         dark: true,
-        friendly_name: "R\u00f6relsesensor k\u00e4llaren 2",
+        friendly_name: "Stair motion sensor",
         device_class: "motion",
         icon: "mdi:walk",
       },
@@ -882,7 +896,7 @@ export const demoEntitiesKernehed: DemoConfig["entities"] = () =>
         battery_level: 47,
         on: true,
         dark: true,
-        friendly_name: "B\u00e4nksensor",
+        friendly_name: "Bench sensor",
         device_class: "motion",
       },
     },

@@ -1,27 +1,19 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-  css,
-  CSSResult,
-} from "lit-element";
-
-import { EntityRow, WeblinkConfig } from "../entity-rows/types";
-import { HomeAssistant } from "../../../types";
-
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, state } from "lit/decorators";
+import { ifDefined } from "lit/directives/if-defined";
 import "../../../components/ha-icon";
+import type { HomeAssistant } from "../../../types";
+import type { LovelaceRow, WeblinkConfig } from "../entity-rows/types";
 
 @customElement("hui-weblink-row")
-class HuiWeblinkRow extends LitElement implements EntityRow {
+class HuiWeblinkRow extends LitElement implements LovelaceRow {
   public hass?: HomeAssistant;
 
-  @property() private _config?: WeblinkConfig;
+  @state() private _config?: WeblinkConfig;
 
   public setConfig(config: WeblinkConfig): void {
     if (!config || !config.url) {
-      throw new Error("Invalid Configuration: 'url' required");
+      throw new Error("URL required");
     }
 
     this._config = {
@@ -31,38 +23,52 @@ class HuiWeblinkRow extends LitElement implements EntityRow {
     };
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config) {
-      return html``;
+      return nothing;
     }
 
     return html`
-      <a href="${this._config.url}" target="_blank">
-        <ha-icon .icon="${this._config.icon}"></ha-icon>
-        <div>${this._config.name}</div>
+      <a
+        href=${this._config.url}
+        target=${ifDefined(this._computeTargetValue())}
+        rel="noreferrer"
+        ?download=${this._config.download}
+      >
+        <ha-icon .icon=${this._config.icon}></ha-icon>
+        <div .title=${this._config.name}>${this._config.name}</div>
       </a>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      a {
-        display: flex;
-        align-items: center;
-        color: var(--primary-color);
-      }
-      ha-icon {
-        padding: 8px;
-        color: var(--paper-item-icon-color);
-      }
-      div {
-        flex: 1;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        margin-left: 16px;
-      }
-    `;
+  static styles = css`
+    a {
+      display: flex;
+      align-items: center;
+      color: var(--primary-color);
+    }
+    ha-icon {
+      padding: 8px;
+      color: var(--paper-item-icon-color);
+    }
+    div {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-left: 16px;
+      margin-inline-start: 16px;
+      margin-inline-end: initial;
+    }
+  `;
+
+  protected _computeTargetValue(): string | undefined {
+    return this._config &&
+      (this._config.url.indexOf("://") !== -1 ||
+        this._config.new_tab === true ||
+        this._config.download === true)
+      ? "_blank"
+      : undefined;
   }
 }
 

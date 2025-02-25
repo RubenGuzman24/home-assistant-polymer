@@ -1,120 +1,229 @@
+import { mdiAlert } from "@mdi/js";
+import type { HassEntity } from "home-assistant-js-websocket";
+import type { CSSResultGroup, PropertyValues } from "lit";
+import { LitElement, css, html, nothing } from "lit";
+import { property, state } from "lit/decorators";
+import { ifDefined } from "lit/directives/if-defined";
+import { styleMap } from "lit/directives/style-map";
+import { computeDomain } from "../../common/entity/compute_domain";
+import { computeStateDomain } from "../../common/entity/compute_state_domain";
 import {
-  LitElement,
-  TemplateResult,
-  css,
-  CSSResult,
-  html,
-  property,
-  PropertyValues,
-  query,
-} from "lit-element";
-import "../ha-icon";
-import computeStateDomain from "../../common/entity/compute_state_domain";
-import stateIcon from "../../common/entity/state_icon";
-import { HassEntity } from "home-assistant-js-websocket";
-// Not duplicate, this is for typing.
-// tslint:disable-next-line
-import { HaIcon } from "../ha-icon";
+  stateColorBrightness,
+  stateColorCss,
+} from "../../common/entity/state_color";
+import { iconColorCSS } from "../../common/style/icon_color_css";
+import { cameraUrlWithWidthHeight } from "../../data/camera";
+import { CLIMATE_HVAC_ACTION_TO_MODE } from "../../data/climate";
+import type { HomeAssistant } from "../../types";
+import "../ha-state-icon";
 
-class StateBadge extends LitElement {
-  @property() public stateObj?: HassEntity;
-  @property() public overrideIcon?: string;
-  @query("ha-icon") private _icon!: HaIcon;
+export class StateBadge extends LitElement {
+  public hass?: HomeAssistant;
 
-  protected render(): TemplateResult | void {
-    const stateObj = this.stateObj;
+  @property({ attribute: false }) public stateObj?: HassEntity;
 
-    if (!stateObj) {
-      return html``;
+  @property({ attribute: false }) public overrideIcon?: string;
+
+  @property({ attribute: false }) public overrideImage?: string;
+
+  // Cannot be a boolean attribute because undefined is treated different than
+  // false.  When it is undefined, state is still colored for light entities.
+  @property({ attribute: false }) public stateColor?: boolean;
+
+  @property() public color?: string;
+
+  // @todo Consider reworking to eliminate need for attribute since it is manipulated internally
+  @property({ type: Boolean, reflect: true }) public icon = true;
+
+  @state() private _iconStyle: Record<string, string | undefined> = {};
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    if (
+      this.hasUpdated &&
+      this.overrideImage === undefined &&
+      (this.stateObj?.attributes.entity_picture ||
+        this.stateObj?.attributes.entity_picture_local)
+    ) {
+      // Update image on connect, so we get new auth token
+      this.requestUpdate("stateObj");
     }
-
-    return html`
-      <ha-icon
-        id="icon"
-        data-domain=${computeStateDomain(stateObj)}
-        data-state=${stateObj.state}
-        .icon=${this.overrideIcon || stateIcon(stateObj)}
-      ></ha-icon>
-    `;
   }
 
-  protected updated(changedProps: PropertyValues) {
-    if (!changedProps.has("stateObj") || !this.stateObj) {
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (
+      this.overrideImage === undefined &&
+      (this.stateObj?.attributes.entity_picture ||
+        this.stateObj?.attributes.entity_picture_local)
+    ) {
+      // Clear image on disconnect so we don't fetch with old auth when we reconnect
+      this.style.backgroundImage = "";
+    }
+  }
+
+  private get _stateColor() {
+    const domain = this.stateObj
+      ? computeStateDomain(this.stateObj)
+      : undefined;
+    return this.stateColor ?? domain === "light";
+  }
+
+  protected render() {
+    const stateObj = this.stateObj;
+
+    // We either need a `stateObj` or one override
+    if (!stateObj && !this.overrideIcon && !this.overrideImage) {
+      return html`<div class="missing">
+        <ha-svg-icon .path=${mdiAlert}></ha-svg-icon>
+      </div>`;
+    }
+
+    if (!this.icon) {
+      return nothing;
+    }
+
+    const domain = stateObj ? computeStateDomain(stateObj) : undefined;
+
+    return html`<ha-state-icon
+      .hass=${this.hass}
+      style=${styleMap(this._iconStyle)}
+      data-domain=${ifDefined(domain)}
+      data-state=${ifDefined(stateObj?.state)}
+      .icon=${this.overrideIcon}
+      .stateObj=${stateObj}
+    ></ha-state-icon>`;
+  }
+
+  public willUpdate(changedProps: PropertyValues<this>) {
+    super.willUpdate(changedProps);
+    if (
+      !changedProps.has("stateObj") &&
+      !changedProps.has("overrideImage") &&
+      !changedProps.has("overrideIcon") &&
+      !changedProps.has("stateColor") &&
+      !changedProps.has("color")
+    ) {
       return;
     }
     const stateObj = this.stateObj;
 
-    const iconStyle: Partial<CSSStyleDeclaration> = {
-      color: "",
-      filter: "",
-    };
-    const hostStyle: Partial<CSSStyleDeclaration> = {
-      backgroundImage: "",
-    };
+    const iconStyle: Record<string, string> = {};
+    let backgroundImage = "";
+
+    this.icon = true;
+
     if (stateObj) {
-      // hide icon if we have entity picture
-      if (stateObj.attributes.entity_picture && !this.overrideIcon) {
-        hostStyle.backgroundImage =
-          "url(" + stateObj.attributes.entity_picture + ")";
-        iconStyle.display = "none";
-      } else {
-        if (stateObj.attributes.hs_color) {
-          const hue = stateObj.attributes.hs_color[0];
-          const sat = stateObj.attributes.hs_color[1];
-          if (sat > 10) {
-            iconStyle.color = `hsl(${hue}, 100%, ${100 - sat / 2}%)`;
+      const domain = computeDomain(stateObj.entity_id);
+      if (this.overrideImage === undefined) {
+        // hide icon if we have entity picture
+        if (
+          (stateObj.attributes.entity_picture_local ||
+            stateObj.attributes.entity_picture) &&
+          !this.overrideIcon
+        ) {
+          let imageUrl =
+            stateObj.attributes.entity_picture_local ||
+            stateObj.attributes.entity_picture;
+          if (this.hass) {
+            imageUrl = this.hass.hassUrl(imageUrl);
+          }
+          if (domain === "camera") {
+            imageUrl = cameraUrlWithWidthHeight(imageUrl, 80, 80);
+          }
+          backgroundImage = `url(${imageUrl})`;
+          this.icon = false;
+        } else if (this.color) {
+          // Externally provided overriding color wins over state color
+          iconStyle.color = this.color;
+        } else if (this._stateColor) {
+          const color = stateColorCss(stateObj);
+          if (color) {
+            iconStyle.color = color;
+          }
+          if (stateObj.attributes.rgb_color) {
+            iconStyle.color = `rgb(${stateObj.attributes.rgb_color.join(",")})`;
+          }
+          if (stateObj.attributes.brightness) {
+            const brightness = stateObj.attributes.brightness;
+            if (typeof brightness !== "number") {
+              const errorMessage = `Type error: state-badge expected number, but type of ${
+                stateObj.entity_id
+              }.attributes.brightness is ${typeof brightness} (${brightness})`;
+              // eslint-disable-next-line
+              console.warn(errorMessage);
+            }
+            iconStyle.filter = stateColorBrightness(stateObj);
+          }
+          if (stateObj.attributes.hvac_action) {
+            const hvacAction = stateObj.attributes.hvac_action;
+            if (hvacAction in CLIMATE_HVAC_ACTION_TO_MODE) {
+              iconStyle.color = stateColorCss(
+                stateObj,
+                CLIMATE_HVAC_ACTION_TO_MODE[hvacAction]
+              )!;
+            } else {
+              delete iconStyle.color;
+            }
           }
         }
-        if (stateObj.attributes.brightness) {
-          const brightness = stateObj.attributes.brightness;
-          if (typeof brightness !== "number") {
-            const errorMessage = `Type error: state-badge expected number, but type of ${
-              stateObj.entity_id
-            }.attributes.brightness is ${typeof brightness} (${brightness})`;
-            // tslint:disable-next-line
-            console.warn(errorMessage);
-          }
-          // lowest brighntess will be around 50% (that's pretty dark)
-          iconStyle.filter = `brightness(${(brightness + 245) / 5}%)`;
+      } else if (this.overrideImage) {
+        let imageUrl = this.overrideImage;
+        if (this.hass) {
+          imageUrl = this.hass.hassUrl(imageUrl);
         }
+        backgroundImage = `url(${imageUrl})`;
+        this.icon = false;
+      }
+
+      if (domain === "update") {
+        this.style.borderRadius = "0";
+      } else if (domain === "media_player" || domain === "camera") {
+        this.style.borderRadius = "8%";
       }
     }
-    Object.assign(this._icon.style, iconStyle);
-    Object.assign(this.style, hostStyle);
+
+    this._iconStyle = iconStyle;
+    this.style.backgroundImage = backgroundImage;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        position: relative;
-        display: inline-block;
-        width: 40px;
-        color: var(--paper-item-icon-color, #44739e);
-        border-radius: 50%;
-        height: 40px;
-        text-align: center;
-        background-size: cover;
-        line-height: 40px;
-      }
-
-      ha-icon {
-        transition: color 0.3s ease-in-out, filter 0.3s ease-in-out;
-      }
-
-      /* Color the icon if light or sun is on */
-      ha-icon[data-domain="light"][data-state="on"],
-      ha-icon[data-domain="switch"][data-state="on"],
-      ha-icon[data-domain="binary_sensor"][data-state="on"],
-      ha-icon[data-domain="fan"][data-state="on"],
-      ha-icon[data-domain="sun"][data-state="above_horizon"] {
-        color: var(--paper-item-icon-active-color, #fdd835);
-      }
-
-      /* Color the icon if unavailable */
-      ha-icon[data-state="unavailable"] {
-        color: var(--state-icon-unavailable-color);
-      }
-    `;
+  static get styles(): CSSResultGroup {
+    return [
+      iconColorCSS,
+      css`
+        :host {
+          position: relative;
+          display: inline-block;
+          width: 40px;
+          color: var(--paper-item-icon-color, #44739e);
+          border-radius: 50%;
+          height: 40px;
+          text-align: center;
+          background-size: cover;
+          line-height: 40px;
+          vertical-align: middle;
+          box-sizing: border-box;
+          --state-inactive-color: initial;
+        }
+        :host(:focus) {
+          outline: none;
+        }
+        :host(:not([icon]):focus) {
+          border: 2px solid var(--divider-color);
+        }
+        :host([icon]:focus) {
+          background: var(--divider-color);
+        }
+        ha-state-icon {
+          transition:
+            color 0.3s ease-in-out,
+            filter 0.3s ease-in-out;
+        }
+        .missing {
+          color: #fce588;
+        }
+      `,
+    ];
   }
 }
 

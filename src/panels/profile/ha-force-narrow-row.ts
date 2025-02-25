@@ -1,23 +1,19 @@
-import {
-  LitElement,
-  TemplateResult,
-  html,
-  property,
-  customElement,
-} from "lit-element";
-import "@polymer/paper-toggle-button/paper-toggle-button";
-
-import "./ha-settings-row";
-import { HomeAssistant } from "../../types";
+import type { TemplateResult } from "lit";
+import { html, LitElement } from "lit";
+import { customElement, property } from "lit/decorators";
 import { fireEvent } from "../../common/dom/fire_event";
-import { PolymerChangedEvent } from "../../polymer-types";
+import "../../components/ha-settings-row";
+import "../../components/ha-switch";
+import type { HaSwitch } from "../../components/ha-switch";
+import type { HomeAssistant } from "../../types";
 
 @customElement("ha-force-narrow-row")
-class HaPushNotificationsRow extends LitElement {
-  @property() public hass!: HomeAssistant;
-  @property() public narrow!: boolean;
+class HaForcedNarrowRow extends LitElement {
+  @property({ attribute: false }) public hass!: HomeAssistant;
 
-  protected render(): TemplateResult | void {
+  @property({ type: Boolean }) public narrow = false;
+
+  protected render(): TemplateResult {
     return html`
       <ha-settings-row .narrow=${this.narrow}>
         <span slot="heading">
@@ -26,16 +22,16 @@ class HaPushNotificationsRow extends LitElement {
         <span slot="description">
           ${this.hass.localize("ui.panel.profile.force_narrow.description")}
         </span>
-        <paper-toggle-button
+        <ha-switch
           .checked=${this.hass.dockedSidebar === "always_hidden"}
-          @checked-changed=${this._checkedChanged}
-        ></paper-toggle-button>
+          @change=${this._checkedChanged}
+        ></ha-switch>
       </ha-settings-row>
     `;
   }
 
-  private async _checkedChanged(ev: PolymerChangedEvent<boolean>) {
-    const newValue = ev.detail.value;
+  private async _checkedChanged(ev: Event) {
+    const newValue = (ev.target as HaSwitch).checked;
     if (newValue === (this.hass.dockedSidebar === "always_hidden")) {
       return;
     }
@@ -47,6 +43,6 @@ class HaPushNotificationsRow extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "ha-force-narrow-row": HaPushNotificationsRow;
+    "ha-force-narrow-row": HaForcedNarrowRow;
   }
 }

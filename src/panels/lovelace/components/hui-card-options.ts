@@ -1,170 +1,428 @@
-import {
-  html,
-  LitElement,
-  customElement,
-  property,
-  css,
-  CSSResult,
-  TemplateResult,
-} from "lit-element";
 import "@material/mwc-button";
-import "@polymer/paper-menu-button/paper-menu-button";
-import "@polymer/paper-icon-button/paper-icon-button";
-import "@polymer/paper-listbox/paper-listbox";
-
+import type { ActionDetail } from "@material/mwc-list/mwc-list-foundation";
+import {
+  mdiContentCopy,
+  mdiContentCut,
+  mdiDelete,
+  mdiDotsVertical,
+  mdiFileMoveOutline,
+  mdiMinus,
+  mdiPlus,
+  mdiPlusCircleMultipleOutline,
+} from "@mdi/js";
+import deepClone from "deep-clone-simple";
+import type { CSSResultGroup, PropertyValues, TemplateResult } from "lit";
+import { LitElement, css, html, nothing } from "lit";
+import { customElement, property, queryAssignedNodes } from "lit/decorators";
+import { storage } from "../../../common/decorators/storage";
+import { fireEvent } from "../../../common/dom/fire_event";
+import "../../../components/ha-button-menu";
+import "../../../components/ha-icon-button";
+import "../../../components/ha-list-item";
+import type { LovelaceCardConfig } from "../../../data/lovelace/config/card";
+import { saveConfig } from "../../../data/lovelace/config/types";
+import { isStrategyView } from "../../../data/lovelace/config/view";
+import {
+  showAlertDialog,
+  showPromptDialog,
+} from "../../../dialogs/generic/show-dialog-box";
+import { haStyle } from "../../../resources/styles";
+import type { HomeAssistant } from "../../../types";
+import { computeCardSize } from "../common/compute-card-size";
 import { showEditCardDialog } from "../editor/card-editor/show-edit-card-dialog";
-import { confDeleteCard } from "../editor/delete-card";
-import { HomeAssistant } from "../../../types";
-import { LovelaceCardConfig } from "../../../data/lovelace";
-import { Lovelace } from "../types";
-import { swapCard } from "../editor/config-util";
-import { showMoveCardViewDialog } from "../editor/card-editor/show-move-card-view-dialog";
+import {
+  addCard,
+  deleteCard,
+  moveCardToContainer,
+  moveCardToIndex,
+} from "../editor/config-util";
+import {
+  type LovelaceCardPath,
+  type LovelaceContainerPath,
+  findLovelaceItems,
+  getLovelaceContainerPath,
+  parseLovelaceCardPath,
+} from "../editor/lovelace-path";
+import { showSelectViewDialog } from "../editor/select-view/show-select-view-dialog";
+import type { Lovelace, LovelaceCard } from "../types";
 
 @customElement("hui-card-options")
 export class HuiCardOptions extends LitElement {
-  public cardConfig?: LovelaceCardConfig;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public lovelace?: Lovelace;
 
-  @property() public lovelace?: Lovelace;
+  @property({ type: Array }) public path?: LovelaceCardPath;
 
-  @property() public path?: [number, number];
+  @queryAssignedNodes() private _assignedNodes?: NodeListOf<LovelaceCard>;
 
-  protected render(): TemplateResult | void {
+  @property({ attribute: "hide-position", type: Boolean })
+  public hidePosition = false;
+
+  @storage({
+    key: "dashboardCardClipboard",
+    state: false,
+    subscribe: false,
+    storage: "sessionStorage",
+  })
+  protected _clipboard?: LovelaceCardConfig;
+
+  public getCardSize() {
+    return this._assignedNodes ? computeCardSize(this._assignedNodes[0]) : 1;
+  }
+
+  protected updated(changedProps: PropertyValues) {
+    if (!changedProps.has("path") || !this.path) {
+      return;
+    }
+    const { viewIndex } = parseLovelaceCardPath(this.path);
+    this.classList.toggle(
+      "panel",
+      this.lovelace!.config.views[viewIndex].panel
+    );
+  }
+
+  private get _cards() {
+    const containerPath = getLovelaceContainerPath(this.path!);
+    return findLovelaceItems("cards", this.lovelace!.config, containerPath)!;
+  }
+
+  protected render(): TemplateResult {
+    const { cardIndex } = parseLovelaceCardPath(this.path!);
+
     return html`
-      <slot></slot>
-      <div class="options">
-        <div class="primary-actions">
-          <mwc-button @click="${this._editCard}"
+      <div class="card"><slot></slot></div>
+      <ha-card>
+        <div class="card-actions">
+          <mwc-button @click=${this._editCard}
             >${this.hass!.localize(
               "ui.panel.lovelace.editor.edit_card.edit"
             )}</mwc-button
           >
-        </div>
-        <div class="secondary-actions">
-          <paper-icon-button
-            title="Move card down"
-            class="move-arrow"
-            icon="hass:arrow-down"
-            @click="${this._cardDown}"
-            ?disabled="${this.lovelace!.config.views[this.path![0]].cards!
-              .length ===
-              this.path![1] + 1}"
-          ></paper-icon-button>
-          <paper-icon-button
-            title="Move card up"
-            class="move-arrow"
-            icon="hass:arrow-up"
-            @click="${this._cardUp}"
-            ?disabled="${this.path![1] === 0}"
-          ></paper-icon-button>
-          <paper-menu-button
-            horizontal-align="right"
-            vertical-align="bottom"
-            vertical-offset="40"
-          >
-            <paper-icon-button
-              icon="hass:dots-vertical"
-              slot="dropdown-trigger"
-            ></paper-icon-button>
-            <paper-listbox slot="dropdown-content">
-              <paper-item @click="${this._moveCard}"
-                >${this.hass!.localize(
+          <div class="right">
+            <slot name="buttons"></slot>
+            ${!this.hidePosition
+              ? html`
+                  <ha-icon-button
+                    .label=${this.hass!.localize(
+                      "ui.panel.lovelace.editor.edit_card.decrease_position"
+                    )}
+                    .path=${mdiMinus}
+                    class="move-arrow"
+                    @click=${this._decreaseCardPosiion}
+                    ?disabled=${cardIndex === 0}
+                  ></ha-icon-button>
+                  <ha-icon-button
+                    @click=${this._changeCardPosition}
+                    .label=${this.hass!.localize(
+                      "ui.panel.lovelace.editor.edit_card.change_position"
+                    )}
+                  >
+                    <div class="position-badge">${cardIndex + 1}</div>
+                  </ha-icon-button>
+                  <ha-icon-button
+                    .label=${this.hass!.localize(
+                      "ui.panel.lovelace.editor.edit_card.increase_position"
+                    )}
+                    .path=${mdiPlus}
+                    class="move-arrow"
+                    @click=${this._increaseCardPosition}
+                    .disabled=${this._cards!.length === cardIndex + 1}
+                  ></ha-icon-button>
+                `
+              : nothing}
+            <ha-button-menu @action=${this._handleAction}>
+              <ha-icon-button
+                slot="trigger"
+                .label=${this.hass!.localize(
+                  "ui.panel.lovelace.editor.edit_card.options"
+                )}
+                .path=${mdiDotsVertical}
+              ></ha-icon-button>
+              <ha-list-item graphic="icon">
+                <ha-svg-icon
+                  slot="graphic"
+                  .path=${mdiFileMoveOutline}
+                ></ha-svg-icon>
+                ${this.hass!.localize(
                   "ui.panel.lovelace.editor.edit_card.move"
-                )}</paper-item
-              >
-              <paper-item @click="${this._deleteCard}"
-                >${this.hass!.localize(
+                )}
+              </ha-list-item>
+              <ha-list-item graphic="icon">
+                <ha-svg-icon
+                  slot="graphic"
+                  .path=${mdiPlusCircleMultipleOutline}
+                ></ha-svg-icon>
+                ${this.hass!.localize(
+                  "ui.panel.lovelace.editor.edit_card.duplicate"
+                )}
+              </ha-list-item>
+              <ha-list-item graphic="icon">
+                <ha-svg-icon
+                  slot="graphic"
+                  .path=${mdiContentCopy}
+                ></ha-svg-icon>
+                ${this.hass!.localize(
+                  "ui.panel.lovelace.editor.edit_card.copy"
+                )}
+              </ha-list-item>
+              <ha-list-item graphic="icon">
+                <ha-svg-icon
+                  slot="graphic"
+                  .path=${mdiContentCut}
+                ></ha-svg-icon>
+                ${this.hass!.localize("ui.panel.lovelace.editor.edit_card.cut")}
+              </ha-list-item>
+              <li divider role="separator"></li>
+              <ha-list-item class="warning" graphic="icon">
+                <ha-svg-icon
+                  class="warning"
+                  slot="graphic"
+                  .path=${mdiDelete}
+                ></ha-svg-icon>
+                ${this.hass!.localize(
                   "ui.panel.lovelace.editor.edit_card.delete"
-                )}</paper-item
-              >
-            </paper-listbox>
-          </paper-menu-button>
+                )}
+              </ha-list-item>
+            </ha-button-menu>
+          </div>
         </div>
-      </div>
+      </ha-card>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      div.options {
-        border-top: 1px solid #e8e8e8;
-        padding: 5px 8px;
-        background: var(--paper-card-background-color, white);
-        box-shadow: rgba(0, 0, 0, 0.14) 0px 2px 2px 0px,
-          rgba(0, 0, 0, 0.12) 0px 1px 5px -4px,
-          rgba(0, 0, 0, 0.2) 0px 3px 1px -2px;
-        display: flex;
-      }
+  static get styles(): CSSResultGroup {
+    return [
+      haStyle,
+      css`
+        :host(:hover) {
+          outline: 2px solid var(--primary-color);
+        }
 
-      div.options .primary-actions {
-        flex: 1;
-        margin: auto;
-      }
+        :host(:not(.panel)) ::slotted(*) {
+          display: block;
+        }
 
-      div.options .secondary-actions {
-        flex: 4;
-        text-align: right;
-      }
+        :host(.panel) .card {
+          height: calc(100% - 59px);
+        }
 
-      paper-icon-button {
-        color: var(--primary-text-color);
-      }
+        ha-card {
+          border-top-right-radius: 0;
+          border-top-left-radius: 0;
+        }
 
-      paper-icon-button.move-arrow[disabled] {
-        color: var(--disabled-text-color);
-      }
+        .card-actions {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
 
-      paper-menu-button {
-        color: var(--secondary-text-color);
-        padding: 0;
-      }
+        .right {
+          display: flex;
+          align-items: center;
+        }
 
-      paper-item.header {
-        color: var(--primary-text-color);
-        text-transform: uppercase;
-        font-weight: 500;
-        font-size: 14px;
-      }
+        .position-badge {
+          display: block;
+          width: 24px;
+          line-height: 24px;
+          box-sizing: border-box;
+          border-radius: 50%;
+          font-weight: 500;
+          text-align: center;
+          font-size: 14px;
+          background-color: var(--app-header-edit-background-color, #455a64);
+          color: var(--app-header-edit-text-color, white);
+        }
 
-      paper-item {
-        cursor: pointer;
-      }
-    `;
+        ha-icon-button {
+          color: var(--primary-text-color);
+        }
+
+        ha-icon-button.move-arrow[disabled] {
+          color: var(--disabled-text-color);
+        }
+
+        ha-list-item {
+          cursor: pointer;
+          white-space: nowrap;
+        }
+      `,
+    ];
+  }
+
+  private _handleAction(ev: CustomEvent<ActionDetail>) {
+    switch (ev.detail.index) {
+      case 0:
+        this._moveCard();
+        break;
+      case 1:
+        this._duplicateCard();
+        break;
+      case 2:
+        this._copyCard();
+        break;
+      case 3:
+        this._cutCard();
+        break;
+      case 4:
+        this._deleteCard({ silent: false });
+        break;
+    }
+  }
+
+  private _duplicateCard(): void {
+    const { cardIndex } = parseLovelaceCardPath(this.path!);
+    const containerPath = getLovelaceContainerPath(this.path!);
+    const cardConfig = this._cards![cardIndex];
+    showEditCardDialog(this, {
+      lovelaceConfig: this.lovelace!.config,
+      saveCardConfig: async (config) => {
+        const newConfig = addCard(this.lovelace!.config, containerPath, config);
+        await this.lovelace!.saveConfig(newConfig);
+      },
+      cardConfig,
+      isNew: true,
+    });
   }
 
   private _editCard(): void {
-    showEditCardDialog(this, {
-      lovelace: this.lovelace!,
-      path: this.path!,
+    fireEvent(this, "ll-edit-card", { path: this.path! });
+  }
+
+  private _cutCard(): void {
+    this._copyCard();
+    this._deleteCard({ silent: true });
+  }
+
+  private _copyCard(): void {
+    const { cardIndex } = parseLovelaceCardPath(this.path!);
+    const cardConfig = this._cards[cardIndex];
+    this._clipboard = deepClone(cardConfig);
+  }
+
+  private _decreaseCardPosiion(): void {
+    const lovelace = this.lovelace!;
+    const path = this.path!;
+    const { cardIndex } = parseLovelaceCardPath(path);
+    lovelace.saveConfig(moveCardToIndex(lovelace.config, path, cardIndex - 1));
+  }
+
+  private _increaseCardPosition(): void {
+    const lovelace = this.lovelace!;
+    const path = this.path!;
+    const { cardIndex } = parseLovelaceCardPath(path);
+    lovelace.saveConfig(moveCardToIndex(lovelace.config, path, cardIndex + 1));
+  }
+
+  private async _changeCardPosition(): Promise<void> {
+    const lovelace = this.lovelace!;
+    const path = this.path!;
+    const { cardIndex } = parseLovelaceCardPath(path);
+    const positionString = await showPromptDialog(this, {
+      title: this.hass!.localize(
+        "ui.panel.lovelace.editor.change_position.title"
+      ),
+      text: this.hass!.localize(
+        "ui.panel.lovelace.editor.change_position.text"
+      ),
+      inputType: "number",
+      inputMin: "1",
+      placeholder: String(cardIndex + 1),
     });
-  }
 
-  private _cardUp(): void {
-    const lovelace = this.lovelace!;
-    const path = this.path!;
-    lovelace.saveConfig(
-      swapCard(lovelace.config, path, [path[0], path[1] - 1])
-    );
-  }
+    if (!positionString) return;
 
-  private _cardDown(): void {
-    const lovelace = this.lovelace!;
-    const path = this.path!;
-    lovelace.saveConfig(
-      swapCard(lovelace.config, path, [path[0], path[1] + 1])
-    );
+    const position = parseInt(positionString);
+
+    if (isNaN(position)) return;
+
+    const newIndex = position - 1;
+    lovelace.saveConfig(moveCardToIndex(lovelace.config, path, newIndex));
   }
 
   private _moveCard(): void {
-    showMoveCardViewDialog(this, {
-      path: this.path!,
-      lovelace: this.lovelace!,
+    showSelectViewDialog(this, {
+      lovelaceConfig: this.lovelace!.config,
+      urlPath: this.lovelace!.urlPath,
+      allowDashboardChange: true,
+      header: this.hass!.localize("ui.panel.lovelace.editor.move_card.header"),
+      viewSelectedCallback: async (urlPath, selectedDashConfig, viewIndex) => {
+        if (!this.lovelace) return;
+        const toView = selectedDashConfig.views[viewIndex];
+        const newConfig = selectedDashConfig;
+
+        const undoAction = async () => {
+          this.lovelace!.saveConfig(selectedDashConfig);
+        };
+
+        if (isStrategyView(toView)) {
+          showAlertDialog(this, {
+            title: this.hass!.localize(
+              "ui.panel.lovelace.editor.move_card.error_title"
+            ),
+            text: this.hass!.localize(
+              "ui.panel.lovelace.editor.move_card.error_text_strategy"
+            ),
+            warning: true,
+          });
+          return;
+        }
+
+        const toPath: LovelaceContainerPath = [viewIndex];
+
+        if (urlPath === this.lovelace!.urlPath) {
+          this.lovelace!.saveConfig(
+            moveCardToContainer(newConfig, this.path!, toPath)
+          );
+          this.lovelace.showToast({
+            message: this.hass!.localize(
+              "ui.panel.lovelace.editor.move_card.success"
+            ),
+            duration: 4000,
+            action: {
+              action: undoAction,
+              text: this.hass!.localize("ui.common.undo"),
+            },
+          });
+          return;
+        }
+        try {
+          const { cardIndex } = parseLovelaceCardPath(this.path!);
+          const card = this._cards[cardIndex];
+          await saveConfig(
+            this.hass!,
+            urlPath,
+            addCard(newConfig, toPath, card)
+          );
+          this.lovelace!.saveConfig(
+            deleteCard(this.lovelace!.config, this.path!)
+          );
+
+          this.lovelace.showToast({
+            message: this.hass!.localize(
+              "ui.panel.lovelace.editor.move_card.success"
+            ),
+            duration: 4000,
+            action: {
+              action: undoAction,
+              text: this.hass!.localize("ui.common.undo"),
+            },
+          });
+        } catch (_err: any) {
+          this.lovelace.showToast({
+            message: this.hass!.localize(
+              "ui.panel.lovelace.editor.move_card.error"
+            ),
+          });
+        }
+      },
     });
   }
 
-  private _deleteCard(): void {
-    confDeleteCard(this.lovelace!, this.path!);
+  private _deleteCard({ silent }: { silent: boolean }): void {
+    fireEvent(this, "ll-delete-card", { path: this.path!, silent });
   }
 }
 

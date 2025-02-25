@@ -1,161 +1,193 @@
-import { HomeAssistant } from "../types";
-import { createCollection } from "home-assistant-js-websocket";
-import { debounce } from "../common/util/debounce";
-import { LocalizeFunc } from "../common/translations/localize";
-
-export interface DataEntryFlowProgressedEvent {
-  type: "data_entry_flow_progressed";
-  data: {
-    handler: string;
-    flow_id: string;
-    refresh: boolean;
-  };
-}
+import type { UnsubscribeFunc } from "home-assistant-js-websocket";
+import type { HomeAssistant } from "../types";
+import type { IntegrationType } from "./integration";
 
 export interface ConfigEntry {
   entry_id: string;
   domain: string;
   title: string;
   source: string;
-  state: string;
-  connection_class: string;
+  state:
+    | "loaded"
+    | "setup_error"
+    | "migration_error"
+    | "setup_retry"
+    | "not_loaded"
+    | "failed_unload"
+    | "setup_in_progress";
   supports_options: boolean;
+  supports_remove_device: boolean;
+  supports_unload: boolean;
+  supports_reconfigure: boolean;
+  supported_subentry_types: Record<string, { supports_reconfigure: boolean }>;
+  num_subentries: number;
+  pref_disable_new_entities: boolean;
+  pref_disable_polling: boolean;
+  disabled_by: "user" | null;
+  reason: string | null;
+  error_reason_translation_key: string | null;
+  error_reason_translation_placeholders: Record<string, string> | null;
 }
 
-export interface FieldSchema {
-  name: string;
-  default?: any;
-  optional: boolean;
-}
-
-export interface ConfigFlowProgress {
-  flow_id: string;
-  handler: string;
-  context: {
-    title_placeholders: { [key: string]: string };
-    [key: string]: any;
-  };
-}
-
-export interface ConfigFlowStepForm {
-  type: "form";
-  flow_id: string;
-  handler: string;
-  step_id: string;
-  data_schema: FieldSchema[];
-  errors: { [key: string]: string };
-  description_placeholders: { [key: string]: string };
-}
-
-export interface ConfigFlowStepExternal {
-  type: "external";
-  flow_id: string;
-  handler: string;
-  step_id: string;
-  url: string;
-  description_placeholders: { [key: string]: string };
-}
-
-export interface ConfigFlowStepCreateEntry {
-  type: "create_entry";
-  version: number;
-  flow_id: string;
-  handler: string;
+export interface SubEntry {
+  subentry_id: string;
+  subentry_type: string;
   title: string;
-  // Config entry ID
-  result: string;
-  description: string;
-  description_placeholders: { [key: string]: string };
+  unique_id: string;
 }
 
-export interface ConfigFlowStepAbort {
-  type: "abort";
-  flow_id: string;
-  handler: string;
-  reason: string;
-  description_placeholders: { [key: string]: string };
+export const getSubEntries = (hass: HomeAssistant, entry_id: string) =>
+  hass.callWS<SubEntry[]>({
+    type: "config_entries/subentries/list",
+    entry_id,
+  });
+
+export const deleteSubEntry = (
+  hass: HomeAssistant,
+  entry_id: string,
+  subentry_id: string
+) =>
+  hass.callWS({
+    type: "config_entries/subentries/delete",
+    entry_id,
+    subentry_id,
+  });
+
+export type ConfigEntryMutableParams = Partial<
+  Pick<
+    ConfigEntry,
+    "title" | "pref_disable_new_entities" | "pref_disable_polling"
+  >
+>;
+
+// https://github.com/home-assistant/core/blob/2286dea636fda001f03433ba14d7adbda43979e5/homeassistant/config_entries.py#L81
+export const ERROR_STATES: ConfigEntry["state"][] = [
+  "migration_error",
+  "setup_error",
+  "setup_retry",
+];
+
+// https://github.com/home-assistant/core/blob/2286dea636fda001f03433ba14d7adbda43979e5/homeassistant/config_entries.py#L81
+export const RECOVERABLE_STATES: ConfigEntry["state"][] = [
+  "not_loaded",
+  "loaded",
+  "setup_error",
+  "setup_retry",
+];
+
+export interface ConfigEntryUpdate {
+  // null means no update as is the current state
+  type: null | "added" | "removed" | "updated";
+  entry: ConfigEntry;
 }
 
-export type ConfigFlowStep =
-  | ConfigFlowStepForm
-  | ConfigFlowStepExternal
-  | ConfigFlowStepCreateEntry
-  | ConfigFlowStepAbort;
-
-export const createConfigFlow = (hass: HomeAssistant, handler: string) =>
-  hass.callApi<ConfigFlowStep>("POST", "config/config_entries/flow", {
-    handler,
-  });
-
-export const fetchConfigFlow = (hass: HomeAssistant, flowId: string) =>
-  hass.callApi<ConfigFlowStep>("GET", `config/config_entries/flow/${flowId}`);
-
-export const handleConfigFlowStep = (
+export const subscribeConfigEntries = (
   hass: HomeAssistant,
-  flowId: string,
-  data: { [key: string]: any }
-) =>
-  hass.callApi<ConfigFlowStep>(
-    "POST",
-    `config/config_entries/flow/${flowId}`,
-    data
-  );
-
-export const deleteConfigFlow = (hass: HomeAssistant, flowId: string) =>
-  hass.callApi("DELETE", `config/config_entries/flow/${flowId}`);
-
-export const getConfigFlowsInProgress = (hass: HomeAssistant) =>
-  hass.callApi<ConfigFlowProgress[]>("GET", "config/config_entries/flow");
-
-export const getConfigFlowHandlers = (hass: HomeAssistant) =>
-  hass.callApi<string[]>("GET", "config/config_entries/flow_handlers");
-
-const fetchConfigFlowInProgress = (conn) =>
-  conn.sendMessagePromise({
-    type: "config/entity_registry/list",
-  });
-
-const subscribeConfigFlowInProgressUpdates = (conn, store) =>
-  debounce(
-    conn.subscribeEvents(
-      () =>
-        fetchConfigFlowInProgress(conn).then((flows) =>
-          store.setState(flows, true)
-        ),
-      500,
-      true
-    ),
-    "config_entry_discovered"
-  );
-
-export const subscribeConfigFlowInProgress = (
-  hass: HomeAssistant,
-  onChange: (flows: ConfigFlowProgress[]) => void
-) =>
-  createCollection<ConfigFlowProgress[]>(
-    "_configFlowProgress",
-    fetchConfigFlowInProgress,
-    subscribeConfigFlowInProgressUpdates,
-    hass.connection,
-    onChange
-  );
-
-export const getConfigEntries = (hass: HomeAssistant) =>
-  hass.callApi<ConfigEntry[]>("GET", "config/config_entries/entry");
-
-export const localizeConfigFlowTitle = (
-  localize: LocalizeFunc,
-  flow: ConfigFlowProgress
-) => {
-  const placeholders = flow.context.title_placeholders || {};
-  const placeholderKeys = Object.keys(placeholders);
-  if (placeholderKeys.length === 0) {
-    return localize(`component.${flow.handler}.config.title`);
+  callbackFunction: (message: ConfigEntryUpdate[]) => void,
+  filters?: {
+    type?: IntegrationType[];
+    domain?: string;
   }
-  const args: string[] = [];
-  placeholderKeys.forEach((key) => {
-    args.push(key);
-    args.push(placeholders[key]);
+): Promise<UnsubscribeFunc> => {
+  const params: any = {
+    type: "config_entries/subscribe",
+  };
+  if (filters && filters.type) {
+    params.type_filter = filters.type;
+  }
+  return hass.connection.subscribeMessage<ConfigEntryUpdate[]>(
+    (message) => callbackFunction(message),
+    params
+  );
+};
+
+export const getConfigEntries = (
+  hass: HomeAssistant,
+  filters?: {
+    type?: IntegrationType[];
+    domain?: string;
+  }
+): Promise<ConfigEntry[]> => {
+  const params: any = {};
+  if (filters) {
+    if (filters.type) {
+      params.type_filter = filters.type;
+    }
+    if (filters.domain) {
+      params.domain = filters.domain;
+    }
+  }
+  return hass.callWS<ConfigEntry[]>({
+    type: "config_entries/get",
+    ...params,
   });
-  return localize(`component.${flow.handler}.config.flow_title`, ...args);
+};
+
+export const getConfigEntry = (hass: HomeAssistant, configEntryId: string) =>
+  hass.callWS<{ config_entry: ConfigEntry }>({
+    type: "config_entries/get_single",
+    entry_id: configEntryId,
+  });
+
+export const updateConfigEntry = (
+  hass: HomeAssistant,
+  configEntryId: string,
+  updatedValues: ConfigEntryMutableParams
+) =>
+  hass.callWS<{ require_restart: boolean; config_entry: ConfigEntry }>({
+    type: "config_entries/update",
+    entry_id: configEntryId,
+    ...updatedValues,
+  });
+
+export const deleteConfigEntry = (hass: HomeAssistant, configEntryId: string) =>
+  hass.callApi<{
+    require_restart: boolean;
+  }>("DELETE", `config/config_entries/entry/${configEntryId}`);
+
+export const reloadConfigEntry = (hass: HomeAssistant, configEntryId: string) =>
+  hass.callApi<{
+    require_restart: boolean;
+  }>("POST", `config/config_entries/entry/${configEntryId}/reload`);
+
+export interface DisableConfigEntryResult {
+  require_restart: boolean;
+}
+
+export const disableConfigEntry = (
+  hass: HomeAssistant,
+  configEntryId: string
+) =>
+  hass.callWS<DisableConfigEntryResult>({
+    type: "config_entries/disable",
+    entry_id: configEntryId,
+    disabled_by: "user",
+  });
+
+export const enableConfigEntry = (hass: HomeAssistant, configEntryId: string) =>
+  hass.callWS<{
+    require_restart: boolean;
+  }>({
+    type: "config_entries/disable",
+    entry_id: configEntryId,
+    disabled_by: null,
+  });
+
+export const sortConfigEntries = (
+  configEntries: ConfigEntry[],
+  primaryConfigEntry: string | null
+): ConfigEntry[] => {
+  if (!primaryConfigEntry) {
+    return configEntries;
+  }
+  const primaryEntry = configEntries.find(
+    (e) => e.entry_id === primaryConfigEntry
+  );
+  if (!primaryEntry) {
+    return configEntries;
+  }
+  const otherEntries = configEntries.filter(
+    (e) => e.entry_id !== primaryConfigEntry
+  );
+  return [primaryEntry, ...otherEntries];
 };

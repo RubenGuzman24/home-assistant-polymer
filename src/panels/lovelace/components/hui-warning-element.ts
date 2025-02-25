@@ -1,32 +1,24 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  CSSResult,
-  css,
-  customElement,
-  property,
-} from "lit-element";
-
-import "../../../components/ha-icon";
+import { mdiAlertOutline } from "@mdi/js";
+import type { TemplateResult } from "lit";
+import { css, html, LitElement } from "lit";
+import { customElement, property } from "lit/decorators";
+import "../../../components/ha-svg-icon";
 
 @customElement("hui-warning-element")
 export class HuiWarningElement extends LitElement {
   @property() public label?: string;
 
-  protected render(): TemplateResult | void {
+  protected render(): TemplateResult {
     return html`
-      <ha-icon icon="hass:alert" .title="${this.label}"></ha-icon>
+      <ha-svg-icon .path=${mdiAlertOutline} .title=${this.label}></ha-svg-icon>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      ha-icon {
-        color: #fce588;
-      }
-    `;
-  }
+  static styles = css`
+    ha-svg-icon {
+      color: var(--warning-color);
+    }
+  `;
 }
 
 declare global {

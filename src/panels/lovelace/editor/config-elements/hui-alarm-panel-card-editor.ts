@@ -1,187 +1,167 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-  CSSResult,
-  css,
-} from "lit-element";
-import "@polymer/paper-dropdown-menu/paper-dropdown-menu";
-import "@polymer/paper-item/paper-item";
-import "@polymer/paper-listbox/paper-listbox";
-
-import { struct } from "../../common/structs/struct";
-import { EntitiesEditorEvent, EditorTarget } from "../types";
-import { HomeAssistant } from "../../../../types";
-import { LovelaceCardEditor } from "../../types";
+import { html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import memoizeOne from "memoize-one";
+import { array, assert, assign, object, optional, string } from "superstruct";
+import type { HassEntity } from "home-assistant-js-websocket";
 import { fireEvent } from "../../../../common/dom/fire_event";
-import { configElementStyle } from "./config-elements-style";
+import type { LocalizeFunc } from "../../../../common/translations/localize";
+import "../../../../components/ha-form/ha-form";
+import type { SchemaUnion } from "../../../../components/ha-form/types";
+import type { HomeAssistant } from "../../../../types";
+import type {
+  AlarmPanelCardConfig,
+  AlarmPanelCardConfigState,
+} from "../../cards/types";
+import type { LovelaceCardEditor } from "../../types";
+import { baseLovelaceCardConfig } from "../structs/base-card-struct";
+import {
+  DEFAULT_STATES,
+  ALARM_MODE_STATE_MAP,
+  filterSupportedAlarmStates,
+} from "../../cards/hui-alarm-panel-card";
+import { supportsFeature } from "../../../../common/entity/supports-feature";
+import { ALARM_MODES } from "../../../../data/alarm_control_panel";
 
-import "../../../../components/entity/ha-entity-picker";
-import "../../../../components/ha-icon";
-import { AlarmPanelCardConfig } from "../../cards/types";
+const cardConfigStruct = assign(
+  baseLovelaceCardConfig,
+  object({
+    entity: optional(string()),
+    name: optional(string()),
+    states: optional(array()),
+    theme: optional(string()),
+  })
+);
 
-const cardConfigStruct = struct({
-  type: "string",
-  entity: "string?",
-  name: "string?",
-  states: "array?",
-});
+const states = Object.keys(ALARM_MODE_STATE_MAP) as AlarmPanelCardConfigState[];
 
 @customElement("hui-alarm-panel-card-editor")
-export class HuiAlarmPanelCardEditor extends LitElement
-  implements LovelaceCardEditor {
-  @property() public hass?: HomeAssistant;
+export class HuiAlarmPanelCardEditor
+  extends LitElement
+  implements LovelaceCardEditor
+{
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: AlarmPanelCardConfig;
+  @state() private _config?: AlarmPanelCardConfig;
 
   public setConfig(config: AlarmPanelCardConfig): void {
-    config = cardConfigStruct(config);
+    assert(config, cardConfigStruct);
     this._config = config;
   }
 
-  get _entity(): string {
-    return this._config!.entity || "";
-  }
+  private _schema = memoizeOne(
+    (
+      localize: LocalizeFunc,
+      stateObj: HassEntity | undefined,
+      config_states: AlarmPanelCardConfigState[]
+    ) =>
+      [
+        {
+          name: "entity",
+          required: true,
+          selector: { entity: { domain: "alarm_control_panel" } },
+        },
+        {
+          type: "grid",
+          name: "",
+          schema: [
+            { name: "name", selector: { text: {} } },
+            { name: "theme", selector: { theme: {} } },
+          ],
+        },
+        {
+          name: "states",
+          selector: {
+            select: {
+              multiple: true,
+              mode: "list",
+              options: states.map((s) => ({
+                value: s,
+                label: localize(`ui.card.alarm_control_panel.${s}`),
+                disabled:
+                  !config_states.includes(s) &&
+                  (!stateObj ||
+                    !supportsFeature(
+                      stateObj,
+                      ALARM_MODES[ALARM_MODE_STATE_MAP[s]].feature || 0
+                    )),
+              })),
+            },
+          },
+        },
+      ] as const
+  );
 
-  get _name(): string {
-    return this._config!.name || "";
-  }
-
-  get _states(): string[] {
-    return this._config!.states || [];
-  }
-
-  protected render(): TemplateResult | void {
-    if (!this.hass) {
-      return html``;
+  protected render() {
+    if (!this.hass || !this._config) {
+      return nothing;
     }
 
-    const states = ["arm_home", "arm_away", "arm_night", "arm_custom_bypass"];
+    const stateObj = this.hass.states[this._config.entity];
+    const defaultFilteredStates = filterSupportedAlarmStates(
+      stateObj,
+      DEFAULT_STATES
+    );
+    const config = { states: defaultFilteredStates, ...this._config };
 
     return html`
-      ${configElementStyle}
-      <div class="card-config">
-        <div class="side-by-side">
-          <paper-input
-            label="Name"
-            .value="${this._name}"
-            .configValue="${"name"}"
-            @value-changed="${this._valueChanged}"
-          ></paper-input>
-          <ha-entity-picker
-            .hass="${this.hass}"
-            .value="${this._entity}"
-            .configValue=${"entity"}
-            domain-filter="alarm_control_panel"
-            @change="${this._valueChanged}"
-            allow-custom-entity
-          ></ha-entity-picker>
-        </div>
-        <span>Used States</span> ${this._states.map((state, index) => {
-          return html`
-            <div class="states">
-              <paper-item>${state}</paper-item>
-              <ha-icon
-                class="deleteState"
-                .value="${index}"
-                icon="hass:close"
-                @click=${this._stateRemoved}
-              ></ha-icon>
-            </div>
-          `;
-        })}
-        <paper-dropdown-menu
-          label="Available States"
-          @value-changed="${this._stateAdded}"
-        >
-          <paper-listbox slot="dropdown-content">
-            ${states.map((state) => {
-              return html`
-                <paper-item>${state}</paper-item>
-              `;
-            })}
-          </paper-listbox>
-        </paper-dropdown-menu>
-      </div>
+      <ha-form
+        .hass=${this.hass}
+        .data=${config}
+        .schema=${this._schema(this.hass.localize, stateObj, config.states)}
+        .computeLabel=${this._computeLabelCallback}
+        @value-changed=${this._valueChanged}
+      ></ha-form>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      .states {
-        display: flex;
-        flex-direction: row;
-      }
-      .deleteState {
-        visibility: hidden;
-      }
-      .states:hover > .deleteState {
-        visibility: visible;
-      }
-      ha-icon {
-        padding-top: 12px;
-      }
-    `;
-  }
+  private _valueChanged(ev: CustomEvent): void {
+    const newConfig = ev.detail.value;
 
-  private _stateRemoved(ev: EntitiesEditorEvent): void {
-    if (!this._config || !this._states || !this.hass) {
-      return;
+    // Sort states in a consistent order
+    if (newConfig.states) {
+      const sortStates = states.filter((s) => newConfig.states.includes(s));
+      newConfig.states = sortStates;
     }
 
-    const target = ev.target! as EditorTarget;
-    const index = Number(target.value);
-    if (index > -1) {
-      const newStates = this._states;
-      newStates.splice(index, 1);
-      this._config = {
-        ...this._config,
-        states: newStates,
-      };
-      fireEvent(this, "config-changed", { config: this._config });
-    }
-  }
-
-  private _stateAdded(ev: EntitiesEditorEvent): void {
-    if (!this._config || !this.hass) {
-      return;
-    }
-    const target = ev.target! as EditorTarget;
-    if (!target.value || this._states.indexOf(target.value) >= 0) {
-      return;
-    }
-    const newStates = this._states;
-    newStates.push(target.value);
-    this._config = {
-      ...this._config,
-      states: newStates,
-    };
-    target.value = "";
-    fireEvent(this, "config-changed", { config: this._config });
-  }
-
-  private _valueChanged(ev: EntitiesEditorEvent): void {
-    if (!this._config || !this.hass) {
-      return;
-    }
-    const target = ev.target! as EditorTarget;
-    if (this[`_${target.configValue}`] === target.value) {
-      return;
-    }
-    if (target.configValue) {
-      if (target.value === "") {
-        delete this._config[target.configValue!];
-      } else {
-        this._config = {
-          ...this._config,
-          [target.configValue!]: target.value,
-        };
+    // When changing entities, clear any states that the new entity does not support
+    if (newConfig.states && newConfig.entity !== this._config?.entity) {
+      const newStateObj = this.hass?.states[newConfig.entity];
+      if (newStateObj) {
+        newConfig.states = filterSupportedAlarmStates(
+          newStateObj,
+          newConfig.states
+        );
       }
     }
-    fireEvent(this, "config-changed", { config: this._config });
+
+    fireEvent(this, "config-changed", { config: newConfig });
   }
+
+  private _computeLabelCallback = (
+    schema: SchemaUnion<ReturnType<typeof this._schema>>
+  ) => {
+    switch (schema.name) {
+      case "entity":
+        return this.hass!.localize(
+          "ui.panel.lovelace.editor.card.generic.entity"
+        );
+      case "name":
+        return this.hass!.localize(
+          "ui.panel.lovelace.editor.card.generic.name"
+        );
+      case "theme":
+        return `${this.hass!.localize(
+          "ui.panel.lovelace.editor.card.generic.theme"
+        )} (${this.hass!.localize(
+          "ui.panel.lovelace.editor.card.config.optional"
+        )})`;
+      default:
+        // "states"
+        return this.hass!.localize(
+          "ui.panel.lovelace.editor.card.alarm-panel.available_states"
+        );
+    }
+  };
 }
 
 declare global {

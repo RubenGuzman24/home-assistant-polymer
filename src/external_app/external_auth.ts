@@ -2,13 +2,18 @@
  * Auth class that connects to a native app for authentication.
  */
 import { Auth } from "home-assistant-js-websocket";
-import { ExternalMessaging, InternalMessage } from "./external_messaging";
+import type { EMMessage } from "./external_messaging";
+import { ExternalMessaging } from "./external_messaging";
 
 const CALLBACK_SET_TOKEN = "externalAuthSetToken";
 const CALLBACK_REVOKE_TOKEN = "externalAuthRevokeToken";
 
 interface BasePayload {
   callback: string;
+}
+
+interface GetExternalAuthPayload extends BasePayload {
+  force?: boolean;
 }
 
 interface RefreshTokenResponse {
@@ -26,13 +31,13 @@ declare global {
     webkit?: {
       messageHandlers: {
         getExternalAuth: {
-          postMessage(payload: BasePayload);
+          postMessage(payload: GetExternalAuthPayload);
         };
         revokeExternalAuth: {
           postMessage(payload: BasePayload);
         };
         externalBus: {
-          postMessage(payload: InternalMessage);
+          postMessage(payload: EMMessage);
         };
       };
     };
@@ -45,7 +50,7 @@ if (!window.externalApp && !window.webkit) {
   );
 }
 
-class ExternalAuth extends Auth {
+export class ExternalAuth extends Auth {
   public external?: ExternalMessaging;
 
   constructor(hassUrl: string) {
@@ -60,54 +65,78 @@ class ExternalAuth extends Auth {
     });
   }
 
-  public async refreshAccessToken() {
-    const callbackPayload = { callback: CALLBACK_SET_TOKEN };
+  private _tokenCallbackPromise?: Promise<RefreshTokenResponse>;
 
-    if (window.externalApp) {
-      window.externalApp.getExternalAuth(JSON.stringify(callbackPayload));
-    } else {
-      window.webkit!.messageHandlers.getExternalAuth.postMessage(
-        callbackPayload
-      );
+  public async refreshAccessToken(force?: boolean) {
+    if (this._tokenCallbackPromise && !force) {
+      try {
+        await this._tokenCallbackPromise;
+        return;
+      } catch (_err: any) {
+        // _tokenCallbackPromise is in a rejected state
+        // Clear the _tokenCallbackPromise and go on refreshing access token
+        this._tokenCallbackPromise = undefined;
+      }
+    }
+    const payload: GetExternalAuthPayload = {
+      callback: CALLBACK_SET_TOKEN,
+    };
+    if (force) {
+      payload.force = true;
     }
 
-    const tokens = await new Promise<RefreshTokenResponse>(
+    this._tokenCallbackPromise = new Promise<RefreshTokenResponse>(
       (resolve, reject) => {
         window[CALLBACK_SET_TOKEN] = (success, data) =>
           success ? resolve(data) : reject(data);
       }
     );
 
+    // we sleep 1 microtask to get the promise to actually set it on the window object.
+    await Promise.resolve();
+
+    if (window.externalApp) {
+      window.externalApp.getExternalAuth(JSON.stringify(payload));
+    } else {
+      window.webkit!.messageHandlers.getExternalAuth.postMessage(payload);
+    }
+
+    const tokens = await this._tokenCallbackPromise;
+
     this.data.access_token = tokens.access_token;
     this.data.expires = tokens.expires_in * 1000 + Date.now();
+    this._tokenCallbackPromise = undefined;
   }
 
   public async revoke() {
-    const callbackPayload = { callback: CALLBACK_REVOKE_TOKEN };
+    const payload: BasePayload = { callback: CALLBACK_REVOKE_TOKEN };
 
-    if (window.externalApp) {
-      window.externalApp.revokeExternalAuth(JSON.stringify(callbackPayload));
-    } else {
-      window.webkit!.messageHandlers.revokeExternalAuth.postMessage(
-        callbackPayload
-      );
-    }
-
-    await new Promise((resolve, reject) => {
+    const callbackPromise = new Promise((resolve, reject) => {
       window[CALLBACK_REVOKE_TOKEN] = (success, data) =>
         success ? resolve(data) : reject(data);
     });
+
+    // we sleep 1 microtask to get the promise to actually set it on the window object.
+    await Promise.resolve();
+
+    if (window.externalApp) {
+      window.externalApp.revokeExternalAuth(JSON.stringify(payload));
+    } else {
+      window.webkit!.messageHandlers.revokeExternalAuth.postMessage(payload);
+    }
+
+    await callbackPromise;
   }
 }
 
-export const createExternalAuth = (hassUrl: string) => {
+export const createExternalAuth = async (hassUrl: string) => {
   const auth = new ExternalAuth(hassUrl);
   if (
-    (window.externalApp && window.externalApp.externalBus) ||
+    window.externalApp?.externalBus ||
     (window.webkit && window.webkit.messageHandlers.externalBus)
   ) {
     auth.external = new ExternalMessaging();
-    auth.external.attach();
+    await auth.external.attach();
   }
   return auth;
 };

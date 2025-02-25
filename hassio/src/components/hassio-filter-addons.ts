@@ -1,13 +1,15 @@
-import { HassioAddonInfo } from "../../../src/data/hassio";
-import * as Fuse from "fuse.js";
+import type { IFuseOptions } from "fuse.js";
+import Fuse from "fuse.js";
+import type { StoreAddon } from "../../../src/data/supervisor/store";
 
-export function filterAndSort(addons: HassioAddonInfo[], filter: string) {
-  const options: Fuse.FuseOptions<HassioAddonInfo> = {
+export function filterAndSort(addons: StoreAddon[], filter: string) {
+  const options: IFuseOptions<StoreAddon> = {
     keys: ["name", "description", "slug"],
-    caseSensitive: false,
-    minMatchCharLength: 2,
+    isCaseSensitive: false,
+    minMatchCharLength: Math.min(filter.length, 2),
     threshold: 0.2,
+    ignoreDiacritics: true,
   };
   const fuse = new Fuse(addons, options);
-  return fuse.search(filter);
+  return fuse.search(filter).map((result) => result.item);
 }

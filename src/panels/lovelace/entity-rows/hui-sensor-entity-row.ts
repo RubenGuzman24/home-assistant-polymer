@@ -1,37 +1,30 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  property,
-  CSSResult,
-  css,
-  customElement,
-  PropertyValues,
-} from "lit-element";
-
+import type { PropertyValues } from "lit";
+import { LitElement, html, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { isUnavailableState } from "../../../data/entity";
+import { SENSOR_DEVICE_CLASS_TIMESTAMP } from "../../../data/sensor";
+import type { HomeAssistant } from "../../../types";
+import type { EntitiesCardEntityConfig } from "../cards/types";
+import { hasConfigOrEntityChanged } from "../common/has-changed";
 import "../components/hui-generic-entity-row";
 import "../components/hui-timestamp-display";
-import "../components/hui-warning";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { TimestampRenderingFormat } from "../components/types";
+import type { LovelaceRow } from "./types";
 
-import { HomeAssistant } from "../../../types";
-import { EntityRow, EntityConfig } from "./types";
-import { hasConfigOrEntityChanged } from "../common/has-changed";
-
-import computeStateDisplay from "../../../common/entity/compute_state_display";
-
-interface SensorEntityConfig extends EntityConfig {
-  format?: "relative" | "date" | "time" | "datetime";
+interface SensorEntityConfig extends EntitiesCardEntityConfig {
+  format?: TimestampRenderingFormat;
 }
 
 @customElement("hui-sensor-entity-row")
-class HuiSensorEntityRow extends LitElement implements EntityRow {
-  @property() public hass?: HomeAssistant;
+class HuiSensorEntityRow extends LitElement implements LovelaceRow {
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: SensorEntityConfig;
+  @state() private _config?: SensorEntityConfig;
 
   public setConfig(config: SensorEntityConfig): void {
     if (!config) {
-      throw new Error("Configuration error");
+      throw new Error("Invalid configuration");
     }
     this._config = config;
   }
@@ -40,51 +33,35 @@ class HuiSensorEntityRow extends LitElement implements EntityRow {
     return hasConfigOrEntityChanged(this, changedProps);
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
 
     const stateObj = this.hass.states[this._config.entity];
 
     if (!stateObj) {
       return html`
-        <hui-warning
-          >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
-          )}</hui-warning
-        >
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
       `;
     }
 
     return html`
-      <hui-generic-entity-row .hass="${this.hass}" .config="${this._config}">
-        <div>
-          ${stateObj.attributes.device_class === "timestamp"
-            ? html`
-                <hui-timestamp-display
-                  .hass="${this.hass}"
-                  .ts="${new Date(stateObj.state)}"
-                  .format="${this._config.format}"
-                ></hui-timestamp-display>
-              `
-            : computeStateDisplay(
-                this.hass!.localize,
-                stateObj,
-                this.hass.language
-              )}
-        </div>
+      <hui-generic-entity-row .hass=${this.hass} .config=${this._config}>
+        ${stateObj.attributes.device_class === SENSOR_DEVICE_CLASS_TIMESTAMP &&
+        !isUnavailableState(stateObj.state)
+          ? html`
+              <hui-timestamp-display
+                .hass=${this.hass}
+                .ts=${new Date(stateObj.state)}
+                .format=${this._config.format}
+                capitalize
+              ></hui-timestamp-display>
+            `
+          : this.hass.formatEntityState(stateObj)}
       </hui-generic-entity-row>
-    `;
-  }
-
-  static get styles(): CSSResult {
-    return css`
-      div {
-        text-align: right;
-      }
     `;
   }
 }

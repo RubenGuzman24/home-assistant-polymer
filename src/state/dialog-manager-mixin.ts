@@ -1,12 +1,14 @@
-import { Constructor, LitElement } from "lit-element";
-import { HASSDomEvent } from "../common/dom/fire_event";
-import { HassBaseEl } from "./hass-base-mixin";
+import type { PropertyValues } from "lit";
+import type { HASSDomEvent } from "../common/dom/fire_event";
 import { makeDialogManager, showDialog } from "../dialogs/make-dialog-manager";
+import type { Constructor } from "../types";
+import type { HassBaseEl } from "./hass-base-mixin";
 
 interface RegisterDialogParams {
   dialogShowEvent: keyof HASSDomEvents;
   dialogTag: keyof HTMLElementTagNameMap;
   dialogImport: () => Promise<unknown>;
+  addHistory?: boolean;
 }
 
 declare global {
@@ -20,11 +22,11 @@ declare global {
   }
 }
 
-export const dialogManagerMixin = (
-  superClass: Constructor<LitElement & HassBaseEl>
+export const dialogManagerMixin = <T extends Constructor<HassBaseEl>>(
+  superClass: T
 ) =>
   class extends superClass {
-    protected firstUpdated(changedProps) {
+    protected firstUpdated(changedProps: PropertyValues) {
       super.firstUpdated(changedProps);
       // deprecated
       this.addEventListener("register-dialog", (e) =>
@@ -33,18 +35,20 @@ export const dialogManagerMixin = (
       makeDialogManager(this, this.shadowRoot!);
     }
 
-    private registerDialog({
+    protected registerDialog({
       dialogShowEvent,
       dialogTag,
       dialogImport,
+      addHistory = true,
     }: RegisterDialogParams) {
       this.addEventListener(dialogShowEvent, (showEv) => {
         showDialog(
           this,
           this.shadowRoot!,
-          dialogImport,
           dialogTag,
-          (showEv as HASSDomEvent<unknown>).detail
+          (showEv as HASSDomEvent<unknown>).detail,
+          dialogImport,
+          addHistory
         );
       });
     }

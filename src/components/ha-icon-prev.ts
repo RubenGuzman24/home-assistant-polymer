@@ -1,18 +1,12 @@
-import "@polymer/iron-icon/iron-icon";
-// Not duplicate, this is for typing.
-// tslint:disable-next-line
-import { HaIcon } from "./ha-icon";
+import { mdiChevronLeft, mdiChevronRight } from "@mdi/js";
+import { customElement, property } from "lit/decorators";
+import { mainWindow } from "../common/dom/get_main_window";
+import { HaSvgIcon } from "./ha-svg-icon";
 
-export class HaIconPrev extends HaIcon {
-  public connectedCallback() {
-    this.icon =
-      window.getComputedStyle(this).direction === "ltr"
-        ? "hass:chevron-left"
-        : "hass:chevron-right";
-
-    // calling super after setting icon to have it consistently show the icon (otherwise not always shown)
-    super.connectedCallback();
-  }
+@customElement("ha-icon-prev")
+export class HaIconPrev extends HaSvgIcon {
+  @property() public override path =
+    mainWindow.document.dir === "rtl" ? mdiChevronRight : mdiChevronLeft;
 }
 
 declare global {
@@ -20,5 +14,3 @@ declare global {
     "ha-icon-prev": HaIconPrev;
   }
 }
-
-customElements.define("ha-icon-prev", HaIconPrev);

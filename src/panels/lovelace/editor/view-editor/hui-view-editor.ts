@@ -1,20 +1,23 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-} from "lit-element";
-import "@polymer/paper-input/paper-input";
-import "@polymer/paper-toggle-button/paper-toggle-button";
-
-import { EditorTarget } from "../types";
-import { HomeAssistant } from "../../../../types";
+import { html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import memoizeOne from "memoize-one";
 import { fireEvent } from "../../../../common/dom/fire_event";
-import { configElementStyle } from "../config-elements/config-elements-style";
-
-import "../../components/hui-theme-select-editor";
-import { LovelaceViewConfig } from "../../../../data/lovelace";
+import { slugify } from "../../../../common/string/slugify";
+import type { LocalizeFunc } from "../../../../common/translations/localize";
+import "../../../../components/ha-form/ha-form";
+import type {
+  HaFormSchema,
+  SchemaUnion,
+} from "../../../../components/ha-form/types";
+import type { LovelaceViewConfig } from "../../../../data/lovelace/config/view";
+import type { HomeAssistant } from "../../../../types";
+import {
+  MASONRY_VIEW_LAYOUT,
+  SECTIONS_VIEW_LAYOUT,
+  PANEL_VIEW_LAYOUT,
+  SIDEBAR_VIEW_LAYOUT,
+} from "../../views/const";
+import { getViewType } from "../../views/get-view-type";
 
 declare global {
   interface HASSDomEvents {
@@ -26,114 +29,185 @@ declare global {
 
 @customElement("hui-view-editor")
 export class HuiViewEditor extends LitElement {
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public hass!: HomeAssistant;
 
-  @property() private _config?: LovelaceViewConfig;
+  @property({ attribute: false }) public isNew = false;
 
-  get _path(): string {
-    if (!this._config) {
-      return "";
-    }
-    return this._config.path || "";
-  }
+  @state() private _config!: LovelaceViewConfig;
 
-  get _title(): string {
-    if (!this._config) {
-      return "";
-    }
-    return this._config.title || "";
-  }
+  private _suggestedPath = false;
 
-  get _icon(): string {
-    if (!this._config) {
-      return "";
-    }
-    return this._config.icon || "";
-  }
-
-  get _theme(): string {
-    if (!this._config) {
-      return "";
-    }
-    return this._config.theme || "Backend-selected";
-  }
-
-  get _panel(): boolean {
-    if (!this._config) {
-      return false;
-    }
-    return this._config.panel || false;
-  }
+  private _schema = memoizeOne(
+    (localize: LocalizeFunc, viewType: string) =>
+      [
+        {
+          name: "type",
+          selector: {
+            select: {
+              options: (
+                [
+                  SECTIONS_VIEW_LAYOUT,
+                  MASONRY_VIEW_LAYOUT,
+                  SIDEBAR_VIEW_LAYOUT,
+                  PANEL_VIEW_LAYOUT,
+                ] as const
+              ).map((type) => ({
+                value: type,
+                label: localize(
+                  `ui.panel.lovelace.editor.edit_view.types.${type}`
+                ),
+              })),
+            },
+          },
+        },
+        { name: "title", selector: { text: {} } },
+        {
+          name: "icon",
+          selector: {
+            icon: {},
+          },
+        },
+        { name: "path", selector: { text: {} } },
+        { name: "theme", selector: { theme: {} } },
+        {
+          name: "subview",
+          selector: {
+            boolean: {},
+          },
+        },
+        ...(viewType === SECTIONS_VIEW_LAYOUT
+          ? ([
+              {
+                name: "section_specifics",
+                type: "expandable",
+                flatten: true,
+                expanded: true,
+                schema: [
+                  {
+                    name: "max_columns",
+                    selector: {
+                      number: {
+                        min: 1,
+                        max: 10,
+                        mode: "slider",
+                        slider_ticks: true,
+                      },
+                    },
+                  },
+                  {
+                    name: "dense_section_placement",
+                    selector: {
+                      boolean: {},
+                    },
+                  },
+                  {
+                    name: "top_margin",
+                    selector: {
+                      boolean: {},
+                    },
+                  },
+                ],
+              },
+            ] as const satisfies HaFormSchema[])
+          : []),
+      ] as const satisfies HaFormSchema[]
+  );
 
   set config(config: LovelaceViewConfig) {
     this._config = config;
   }
 
-  protected render(): TemplateResult | void {
+  get _type(): string {
+    return getViewType(this._config);
+  }
+
+  protected render() {
     if (!this.hass) {
-      return html``;
+      return nothing;
+    }
+
+    const schema = this._schema(this.hass.localize, this._type);
+
+    const data = {
+      ...this._config,
+      type: this._type,
+    };
+
+    if (data.max_columns === undefined && this._type === SECTIONS_VIEW_LAYOUT) {
+      data.max_columns = 4;
     }
 
     return html`
-      ${configElementStyle}
-      <div class="card-config">
-        <paper-input
-          label="Title"
-          .value="${this._title}"
-          .configValue="${"title"}"
-          @value-changed="${this._valueChanged}"
-        ></paper-input>
-        <paper-input
-          label="Icon"
-          .value="${this._icon}"
-          .configValue="${"icon"}"
-          @value-changed="${this._valueChanged}"
-        ></paper-input>
-        <paper-input
-          label="URL Path"
-          .value="${this._path}"
-          .configValue="${"path"}"
-          @value-changed="${this._valueChanged}"
-        ></paper-input>
-        <hui-theme-select-editor
-          .hass="${this.hass}"
-          .value="${this._theme}"
-          .configValue="${"theme"}"
-          @theme-changed="${this._valueChanged}"
-        ></hui-theme-select-editor>
-        <paper-toggle-button
-          ?checked="${this._panel !== false}"
-          .configValue="${"panel"}"
-          @change="${this._valueChanged}"
-          >Panel Mode?</paper-toggle-button
-        >
-      </div>
+      <ha-form
+        .hass=${this.hass}
+        .data=${data}
+        .schema=${schema}
+        .computeLabel=${this._computeLabel}
+        .computeHelper=${this._computeHelper}
+        @value-changed=${this._valueChanged}
+      ></ha-form>
     `;
   }
 
-  private _valueChanged(ev: Event): void {
-    if (!this._config || !this.hass) {
-      return;
+  private _valueChanged(ev: CustomEvent): void {
+    const config = ev.detail.value as LovelaceViewConfig;
+
+    if (config.type !== SECTIONS_VIEW_LAYOUT) {
+      delete config.max_columns;
+      delete config.dense_section_placement;
+      delete config.top_margin;
     }
 
-    const target = ev.currentTarget! as EditorTarget;
-
-    if (this[`_${target.configValue}`] === target.value) {
-      return;
+    if (
+      this.isNew &&
+      !this._suggestedPath &&
+      this._config.path === config.path &&
+      (!this._config.path ||
+        config.path === slugify(this._config.title || "", "-"))
+    ) {
+      config.path = slugify(config.title || "", "-");
     }
 
-    let newConfig;
-
-    if (target.configValue) {
-      newConfig = {
-        ...this._config,
-        [target.configValue!]:
-          target.checked !== undefined ? target.checked : target.value,
-      };
-    }
-
-    fireEvent(this, "view-config-changed", { config: newConfig });
+    fireEvent(this, "view-config-changed", { config });
   }
+
+  private _computeLabel = (
+    schema: SchemaUnion<ReturnType<typeof this._schema>>
+  ) => {
+    switch (schema.name) {
+      case "path":
+        return this.hass!.localize("ui.panel.lovelace.editor.card.generic.url");
+      case "type":
+      case "subview":
+      case "max_columns":
+      case "dense_section_placement":
+      case "top_margin":
+      case "section_specifics":
+        return this.hass.localize(
+          `ui.panel.lovelace.editor.edit_view.${schema.name}`
+        );
+      default:
+        return this.hass!.localize(
+          `ui.panel.lovelace.editor.card.generic.${schema.name}`
+        );
+    }
+  };
+
+  private _computeHelper = (
+    schema: SchemaUnion<ReturnType<typeof this._schema>>
+  ) => {
+    switch (schema.name) {
+      case "subview":
+      case "dense_section_placement":
+      case "top_margin":
+        return this.hass.localize(
+          `ui.panel.lovelace.editor.edit_view.${schema.name}_helper`
+        );
+
+      default:
+        return undefined;
+    }
+  };
 }
 
 declare global {

@@ -1,22 +1,29 @@
+import type { ActionDetail } from "@material/mwc-list/mwc-list-foundation";
+import "@material/mwc-list/mwc-list-item";
+import { mdiDotsVertical } from "@mdi/js";
+import type { PropertyValues, TemplateResult } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import memoizeOne from "memoize-one";
+import { atLeastVersion } from "../../../src/common/config/version";
+import { fireEvent } from "../../../src/common/dom/fire_event";
+import { navigate } from "../../../src/common/navigate";
+import { extractSearchParam } from "../../../src/common/url/search-params";
+import "../../../src/components/ha-button-menu";
+import "../../../src/components/ha-icon-button";
+import "../../../src/components/search-input";
+import type { HassioAddonRepository } from "../../../src/data/hassio/addon";
+import { reloadHassioAddons } from "../../../src/data/hassio/addon";
+import { extractApiErrorMessage } from "../../../src/data/hassio/common";
+import type { StoreAddon } from "../../../src/data/supervisor/store";
+import type { Supervisor } from "../../../src/data/supervisor/supervisor";
+import { showAlertDialog } from "../../../src/dialogs/generic/show-dialog-box";
+import "../../../src/layouts/hass-loading-screen";
+import "../../../src/layouts/hass-subpage";
+import type { HomeAssistant, Route } from "../../../src/types";
+import { showRegistriesDialog } from "../dialogs/registries/show-dialog-registries";
+import { showRepositoriesDialog } from "../dialogs/repositories/show-dialog-repositories";
 import "./hassio-addon-repository";
-import "./hassio-repositories-editor";
-import { TemplateResult, html } from "lit-html";
-import {
-  LitElement,
-  CSSResult,
-  css,
-  property,
-  PropertyValues,
-} from "lit-element";
-import { HomeAssistant } from "../../../src/types";
-import {
-  HassioAddonRepository,
-  HassioAddonInfo,
-  fetchHassioAddonsInfo,
-  reloadHassioAddons,
-} from "../../../src/data/hassio";
-import "../../../src/layouts/loading-screen";
-import "../components/hassio-search-input";
 
 const sortRepos = (a: HassioAddonRepository, b: HassioAddonRepository) => {
   if (a.slug === "local") {
@@ -34,96 +41,207 @@ const sortRepos = (a: HassioAddonRepository, b: HassioAddonRepository) => {
   return a.name.toUpperCase() < b.name.toUpperCase() ? -1 : 1;
 };
 
-class HassioAddonStore extends LitElement {
-  @property() public hass!: HomeAssistant;
-  @property() private _addons?: HassioAddonInfo[];
-  @property() private _repos?: HassioAddonRepository[];
-  @property() private _filter?: string;
+@customElement("hassio-addon-store")
+export class HassioAddonStore extends LitElement {
+  @property({ attribute: false }) public hass!: HomeAssistant;
+
+  @property({ attribute: false }) public supervisor!: Supervisor;
+
+  @property({ type: Boolean }) public narrow = false;
+
+  @property({ attribute: false }) public route!: Route;
+
+  @state() private _filter?: string;
 
   public async refreshData() {
-    this._repos = undefined;
-    this._addons = undefined;
-    this._filter = undefined;
-    await reloadHassioAddons(this.hass);
-    await this._loadData();
+    try {
+      await reloadHassioAddons(this.hass);
+    } catch (err) {
+      showAlertDialog(this, {
+        text: extractApiErrorMessage(err),
+      });
+    } finally {
+      this._loadData();
+    }
   }
 
-  protected render(): TemplateResult | void {
-    if (!this._addons || !this._repos) {
-      return html`
-        <loading-screen></loading-screen>
-      `;
-    }
-    const repos: TemplateResult[] = [];
+  protected render() {
+    let repos: (TemplateResult | typeof nothing)[] = [];
 
-    for (const repo of this._repos) {
-      const addons = this._addons!.filter(
-        (addon) => addon.repository === repo.slug
+    if (this.supervisor.store.repositories) {
+      repos = this.addonRepositories(
+        this.supervisor.store.repositories,
+        this.supervisor.store.addons,
+        this._filter
       );
-
-      if (addons.length === 0) {
-        continue;
-      }
-
-      repos.push(html`
-        <hassio-addon-repository
-          .hass=${this.hass}
-          .repo=${repo}
-          .addons=${addons}
-          .filter=${this._filter}
-        ></hassio-addon-repository>
-      `);
     }
 
     return html`
-      <hassio-repositories-editor
+      <hass-subpage
         .hass=${this.hass}
-        .repos=${this._repos}
-      ></hassio-repositories-editor>
+        .narrow=${this.narrow}
+        .route=${this.route}
+        .header=${this.supervisor.localize("panel.store")}
+      >
+        <ha-button-menu slot="toolbar-icon" @action=${this._handleAction}>
+          <ha-icon-button
+            .label=${this.supervisor.localize("common.menu")}
+            .path=${mdiDotsVertical}
+            slot="trigger"
+          ></ha-icon-button>
+          <mwc-list-item>
+            ${this.supervisor.localize("store.check_updates")}
+          </mwc-list-item>
+          <mwc-list-item>
+            ${this.supervisor.localize("store.repositories")}
+          </mwc-list-item>
+          ${this.hass.userData?.showAdvanced &&
+          atLeastVersion(this.hass.config.version, 0, 117)
+            ? html`<mwc-list-item>
+                ${this.supervisor.localize("store.registries")}
+              </mwc-list-item>`
+            : ""}
+        </ha-button-menu>
+        ${repos.length === 0
+          ? html`<hass-loading-screen no-toolbar></hass-loading-screen>`
+          : html`
+              <div class="search">
+                <search-input
+                  .hass=${this.hass}
+                  .filter=${this._filter}
+                  @value-changed=${this._filterChanged}
+                ></search-input>
+              </div>
 
-      <hassio-search-input
-        .filter=${this._filter}
-        @value-changed=${this._filterChanged}
-      ></hassio-search-input>
-
-      ${repos}
+              ${repos}
+            `}
+        ${!this.hass.userData?.showAdvanced
+          ? html`
+              <div class="advanced">
+                <a href="/profile" target="_top">
+                  ${this.supervisor.localize("store.missing_addons")}
+                </a>
+              </div>
+            `
+          : ""}
+      </hass-subpage>
     `;
   }
 
   protected firstUpdated(changedProps: PropertyValues) {
     super.firstUpdated(changedProps);
-    this.addEventListener("hass-api-called", (ev) => this.apiCalled(ev));
+    const repositoryUrl = extractSearchParam("repository_url");
+    navigate("/hassio/store", { replace: true });
+    if (repositoryUrl) {
+      this._manageRepositories(repositoryUrl);
+    }
+
+    this.addEventListener("hass-api-called", (ev) => this._apiCalled(ev));
     this._loadData();
   }
 
-  private apiCalled(ev) {
+  private addonRepositories = memoizeOne(
+    (
+      repositories: HassioAddonRepository[],
+      addons: StoreAddon[],
+      filter?: string
+    ) =>
+      repositories.sort(sortRepos).map((repo) => {
+        const filteredAddons = addons.filter(
+          (addon) => addon.repository === repo.slug
+        );
+
+        return filteredAddons.length !== 0
+          ? html`
+              <hassio-addon-repository
+                .hass=${this.hass}
+                .repo=${repo}
+                .addons=${filteredAddons}
+                .filter=${filter!}
+                .supervisor=${this.supervisor}
+              ></hassio-addon-repository>
+            `
+          : nothing;
+      })
+  );
+
+  private _handleAction(ev: CustomEvent<ActionDetail>) {
+    switch (ev.detail.index) {
+      case 0:
+        this.refreshData();
+        break;
+      case 1:
+        this._manageRepositoriesClicked();
+        break;
+      case 2:
+        this._manageRegistries();
+        break;
+    }
+  }
+
+  private _apiCalled(ev) {
     if (ev.detail.success) {
       this._loadData();
     }
   }
 
-  private async _loadData() {
-    try {
-      const addonsInfo = await fetchHassioAddonsInfo(this.hass);
-      this._repos = addonsInfo.repositories;
-      this._repos.sort(sortRepos);
-      this._addons = addonsInfo.addons;
-    } catch (err) {
-      alert("Failed to fetch add-on info");
-    }
+  private _manageRepositoriesClicked() {
+    this._manageRepositories();
   }
 
-  private async _filterChanged(e) {
+  private _manageRepositories(url?: string) {
+    showRepositoriesDialog(this, {
+      supervisor: this.supervisor,
+      url,
+    });
+  }
+
+  private _manageRegistries() {
+    showRegistriesDialog(this, { supervisor: this.supervisor });
+  }
+
+  private _loadData() {
+    fireEvent(this, "supervisor-collection-refresh", { collection: "addon" });
+    fireEvent(this, "supervisor-collection-refresh", {
+      collection: "supervisor",
+    });
+  }
+
+  private _filterChanged(e) {
     this._filter = e.detail.value;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      hassio-addon-repository {
-        margin-top: 24px;
-      }
-    `;
-  }
+  static styles = css`
+    hassio-addon-repository {
+      margin-top: 24px;
+    }
+    .search {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    search-input {
+      display: block;
+      --mdc-text-field-fill-color: var(--sidebar-background-color);
+      --mdc-text-field-idle-line-color: var(--divider-color);
+    }
+    .advanced {
+      padding: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      color: var(--primary-text-color);
+    }
+    .advanced a {
+      margin-left: 0.5em;
+      margin-inline-start: 0.5em;
+      margin-inline-end: initial;
+      color: var(--primary-color);
+    }
+  `;
 }
 
-customElements.define("hassio-addon-store", HassioAddonStore);
+declare global {
+  interface HTMLElementTagNameMap {
+    "hassio-addon-store": HassioAddonStore;
+  }
+}

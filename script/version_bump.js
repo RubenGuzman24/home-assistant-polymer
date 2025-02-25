@@ -1,7 +1,10 @@
 #!/usr/bin/env node
-const fs = require("fs");
-const util = require("util");
-const exec = util.promisify(require("child_process").exec);
+/* eslint-disable no-console */
+import fs from "fs";
+import util from "util";
+import child_process from "child_process";
+
+const exec = util.promisify(child_process.exec);
 
 function patch(version) {
   const parts = version.split(".");
@@ -10,20 +13,42 @@ function patch(version) {
 
 function today() {
   const now = new Date();
-  return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(
+  return `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(
     2,
     "0"
-  )}${String(now.getDate()).padStart(2, "0")}.0`;
+  )}${String(now.getUTCDate()).padStart(2, "0")}.0`;
+}
+
+function auto(version) {
+  const todayVersion = today();
+  if (todayVersion.split(".")[0] !== version.split(".")[0]) {
+    return todayVersion;
+  }
+  return patch(version);
+}
+
+function nightly() {
+  return `${today()}.dev`;
 }
 
 const methods = {
   patch,
   today,
+  auto,
+  nightly,
 };
 
 async function main(args) {
-  const method = args.length > 0 && methods[args[0]];
-  const commit = args.length > 1 && args[1] == "--commit";
+  let method;
+  let commit;
+
+  if (args.length === 0) {
+    method = methods.auto;
+    commit = true;
+  } else {
+    method = args.length > 0 && methods[args[0]];
+    commit = args.length > 1 && args[1] === "--commit";
+  }
 
   if (!method) {
     console.error(
@@ -33,14 +58,18 @@ async function main(args) {
     return;
   }
 
-  const setup = fs.readFileSync("setup.py", "utf8");
-  const version = setup.match(/\d{8}\.\d+/)[0];
+  const setup = fs.readFileSync("pyproject.toml", "utf8");
+  const version = setup.match(/version\W+=\W"(\d{8}\.\d)"/)[1];
   const newVersion = method(version);
 
   console.log("Current version:", version);
   console.log("New version:", newVersion);
 
-  fs.writeFileSync("setup.py", setup.replace(version, newVersion), "utf-8");
+  fs.writeFileSync(
+    "pyproject.toml",
+    setup.replace(version, newVersion),
+    "utf-8"
+  );
 
   if (!commit) {
     return;

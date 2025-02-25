@@ -1,33 +1,29 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  property,
-  PropertyValues,
-  customElement,
-} from "lit-element";
-
-import "../components/hui-generic-entity-row";
-import "../../../components/paper-time-input.js";
-// tslint:disable-next-line:no-duplicate-imports
-import { PaperTimeInput } from "../../../components/paper-time-input.js";
+import type { PropertyValues } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { computeStateName } from "../../../common/entity/compute_state_name";
 import "../../../components/ha-date-input";
-// tslint:disable-next-line:no-duplicate-imports
-import { HaDateInput } from "../../../components/ha-date-input";
-
-import { HomeAssistant } from "../../../types";
-import { EntityRow, EntityConfig } from "./types";
-import { setInputDateTimeValue } from "../../../data/input_datetime";
+import "../../../components/ha-time-input";
+import { isUnavailableState, UNKNOWN } from "../../../data/entity";
+import {
+  setInputDateTimeValue,
+  stateToIsoDateString,
+} from "../../../data/input_datetime";
+import type { HomeAssistant } from "../../../types";
 import { hasConfigOrEntityChanged } from "../common/has-changed";
+import "../components/hui-generic-entity-row";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { EntityConfig, LovelaceRow } from "./types";
 
 @customElement("hui-input-datetime-entity-row")
-class HuiInputDatetimeEntityRow extends LitElement implements EntityRow {
-  @property() public hass?: HomeAssistant;
-  @property() private _config?: EntityConfig;
+class HuiInputDatetimeEntityRow extends LitElement implements LovelaceRow {
+  @property({ attribute: false }) public hass?: HomeAssistant;
+
+  @state() private _config?: EntityConfig;
 
   public setConfig(config: EntityConfig): void {
     if (!config) {
-      throw new Error("Configuration error");
+      throw new Error("Invalid configuration");
     }
     this._config = config;
   }
@@ -36,56 +32,63 @@ class HuiInputDatetimeEntityRow extends LitElement implements EntityRow {
     return hasConfigOrEntityChanged(this, changedProps);
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
 
     const stateObj = this.hass.states[this._config.entity];
 
     if (!stateObj) {
       return html`
-        <hui-warning
-          >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
-          )}</hui-warning
-        >
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
       `;
     }
 
+    const name = this._config.name || computeStateName(stateObj);
+
     return html`
-      <hui-generic-entity-row .hass="${this.hass}" .config="${this._config}">
-        ${stateObj.attributes.has_date
-          ? html`
-              <ha-date-input
-                .year=${stateObj.attributes.year}
-                .month=${("0" + stateObj.attributes.month).slice(-2)}
-                .day=${("0" + stateObj.attributes.day).slice(-2)}
-                @change=${this._selectedValueChanged}
-                @click=${this._stopEventPropagation}
-              ></ha-date-input>
-              ${stateObj.attributes.has_time ? "," : ""}
-            `
-          : ``}
-        ${stateObj.attributes.has_time
-          ? html`
-              <paper-time-input
-                .hour=${stateObj.state === "unknown"
-                  ? ""
-                  : ("0" + stateObj.attributes.hour).slice(-2)}
-                .min=${stateObj.state === "unknown"
-                  ? ""
-                  : ("0" + stateObj.attributes.minute).slice(-2)}
-                .amPm=${false}
-                @change=${this._selectedValueChanged}
-                @click=${this._stopEventPropagation}
-                hide-label
-                format="24"
-              ></paper-time-input>
-            `
-          : ``}
+      <hui-generic-entity-row
+        .hass=${this.hass}
+        .config=${this._config}
+        .hideName=${stateObj.attributes.has_date &&
+        stateObj.attributes.has_time}
+      >
+        <div
+          class=${stateObj.attributes.has_date && stateObj.attributes.has_time
+            ? "both"
+            : ""}
+        >
+          ${stateObj.attributes.has_date
+            ? html`
+                <ha-date-input
+                  .label=${stateObj.attributes.has_time ? name : undefined}
+                  .locale=${this.hass.locale}
+                  .disabled=${isUnavailableState(stateObj.state)}
+                  .value=${stateToIsoDateString(stateObj)}
+                  @value-changed=${this._dateChanged}
+                >
+                </ha-date-input>
+              `
+            : ``}
+          ${stateObj.attributes.has_time
+            ? html`
+                <ha-time-input
+                  .value=${stateObj.state === UNKNOWN
+                    ? ""
+                    : stateObj.attributes.has_date
+                      ? stateObj.state.split(" ")[1]
+                      : stateObj.state}
+                  .locale=${this.hass.locale}
+                  .disabled=${isUnavailableState(stateObj.state)}
+                  @value-changed=${this._timeChanged}
+                  @click=${this._stopEventPropagation}
+                ></ha-time-input>
+              `
+            : ``}
+        </div>
       </hui-generic-entity-row>
     `;
   }
@@ -94,31 +97,40 @@ class HuiInputDatetimeEntityRow extends LitElement implements EntityRow {
     ev.stopPropagation();
   }
 
-  private get _timeInputEl(): PaperTimeInput {
-    return this.shadowRoot!.querySelector("paper-time-input")!;
+  private _timeChanged(ev: CustomEvent<{ value: string }>): void {
+    const stateObj = this.hass!.states[this._config!.entity];
+    setInputDateTimeValue(
+      this.hass!,
+      stateObj.entity_id,
+      ev.detail.value,
+      stateObj.attributes.has_date ? stateObj.state.split(" ")[0] : undefined
+    );
   }
 
-  private get _dateInputEl(): HaDateInput {
-    return this.shadowRoot!.querySelector("ha-date-input")!;
-  }
-
-  private _selectedValueChanged(ev): void {
+  private _dateChanged(ev: CustomEvent<{ value: string }>): void {
     const stateObj = this.hass!.states[this._config!.entity];
 
-    const time =
-      this._timeInputEl !== null
-        ? this._timeInputEl.value.trim() + ":00"
-        : undefined;
-
-    const date =
-      this._dateInputEl !== null ? this._dateInputEl.value : undefined;
-
-    if (time !== stateObj.state) {
-      setInputDateTimeValue(this.hass!, stateObj.entity_id, time, date);
-    }
-
-    ev.target.blur();
+    setInputDateTimeValue(
+      this.hass!,
+      stateObj.entity_id,
+      stateObj.attributes.has_time ? stateObj.state.split(" ")[1] : undefined,
+      ev.detail.value
+    );
   }
+
+  static styles = css`
+    ha-date-input + ha-time-input {
+      margin-left: 4px;
+      margin-inline-start: 4px;
+      margin-inline-end: initial;
+      direction: var(--direction);
+    }
+    div.both {
+      display: flex;
+      justify-content: flex-end;
+      width: 100%;
+    }
+  `;
 }
 
 declare global {

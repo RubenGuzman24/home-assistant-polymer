@@ -1,3 +1,4 @@
-var requireDir = require("require-dir");
+import { availableParallelism } from "node:os";
+import "./build-scripts/gulp/index.mjs";
 
-requireDir("./build-scripts/gulp/");
+process.env.UV_THREADPOOL_SIZE = availableParallelism();

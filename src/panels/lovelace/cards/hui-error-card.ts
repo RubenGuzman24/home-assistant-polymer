@@ -1,35 +1,18 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-  css,
-  CSSResult,
-} from "lit-element";
-
-import { LovelaceCard } from "../types";
-import { LovelaceCardConfig } from "../../../data/lovelace";
-import { HomeAssistant } from "../../../types";
-import { ErrorCardConfig } from "./types";
-
-export const createErrorCardElement = (config) => {
-  const el = document.createElement("hui-error-card");
-  el.setConfig(config);
-  return el;
-};
-
-export const createErrorCardConfig = (error, origConfig) => ({
-  type: "error",
-  error,
-  origConfig,
-});
+import { dump } from "js-yaml";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import "../../../components/ha-alert";
+import type { HomeAssistant } from "../../../types";
+import type { LovelaceCard } from "../types";
+import type { ErrorCardConfig } from "./types";
 
 @customElement("hui-error-card")
 export class HuiErrorCard extends LitElement implements LovelaceCard {
   public hass?: HomeAssistant;
 
-  @property() private _config?: ErrorCardConfig;
+  @property({ attribute: false }) public preview = false;
+
+  @state() private _config?: ErrorCardConfig;
 
   public getCardSize(): number {
     return 4;
@@ -39,34 +22,33 @@ export class HuiErrorCard extends LitElement implements LovelaceCard {
     this._config = config;
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config) {
-      return html``;
+      return nothing;
     }
 
-    return html`
-      ${this._config.error}
-      <pre>${this._toStr(this._config.origConfig)}</pre>
-    `;
-  }
+    let dumped: string | undefined;
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        display: block;
-        background-color: #ef5350;
-        color: white;
-        padding: 8px;
-        font-weight: 500;
-        user-select: text;
-        cursor: default;
+    if (this._config.origConfig) {
+      try {
+        dumped = dump(this._config.origConfig);
+      } catch (_err: any) {
+        dumped = `[Error dumping ${this._config.origConfig}]`;
       }
-    `;
+    }
+
+    return html`<ha-alert alert-type="error" .title=${this._config.error}>
+      ${dumped ? html`<pre>${dumped}</pre>` : ""}
+    </ha-alert>`;
   }
 
-  private _toStr(config: LovelaceCardConfig): string {
-    return JSON.stringify(config, null, 2);
-  }
+  static styles = css`
+    pre {
+      font-family: var(--code-font-family, monospace);
+      white-space: break-spaces;
+      user-select: text;
+    }
+  `;
 }
 
 declare global {

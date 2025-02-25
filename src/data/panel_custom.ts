@@ -1,4 +1,4 @@
-import { PanelInfo } from "../types";
+import type { PanelInfo } from "../types";
 
 export interface CustomPanelConfig {
   name: string;
@@ -9,6 +9,6 @@ export interface CustomPanelConfig {
   html_url?: string;
 }
 
-export type CustomPanelInfo<T = {}> = PanelInfo<
+export type CustomPanelInfo<T = Record<string, unknown>> = PanelInfo<
   T & { _panel_custom: CustomPanelConfig }
 >;

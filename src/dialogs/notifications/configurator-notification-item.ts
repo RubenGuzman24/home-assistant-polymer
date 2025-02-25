@@ -1,46 +1,39 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  property,
-  customElement,
-} from "lit-element";
 import "@material/mwc-button";
-
-import "./notification-item-template";
-
-import { HomeAssistant } from "../../types";
+import { html, LitElement, nothing } from "lit";
+import { customElement, property } from "lit/decorators";
 import { fireEvent } from "../../common/dom/fire_event";
-import { PersitentNotificationEntity } from "../../data/persistent_notification";
+import { domainToName } from "../../data/integration";
+import type { PersitentNotificationEntity } from "../../data/persistent_notification";
+import type { HomeAssistant } from "../../types";
+import "./notification-item-template";
 
 @customElement("configurator-notification-item")
 export class HuiConfiguratorNotificationItem extends LitElement {
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() public notification?: PersitentNotificationEntity;
+  @property({ attribute: false })
+  public notification?: PersitentNotificationEntity;
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this.hass || !this.notification) {
-      return html``;
+      return nothing;
     }
 
     return html`
       <notification-item-template>
-        <span slot="header">${this.hass.localize("domain.configurator")}</span>
+        <span slot="header">
+          ${domainToName(this.hass.localize, "configurator")}
+        </span>
 
         <div>
-          ${this.hass.localize(
-            "ui.notification_drawer.click_to_configure",
-            "entity",
-            this.notification.attributes.friendly_name
-          )}
+          ${this.hass.localize("ui.notification_drawer.click_to_configure", {
+            entity: this.notification.attributes.friendly_name,
+          })}
         </div>
 
-        <mwc-button slot="actions" @click="${this._handleClick}"
-          >${this.hass.localize(
-            `state.configurator.${this.notification.state}`
-          )}</mwc-button
-        >
+        <mwc-button slot="actions" @click=${this._handleClick}>
+          ${this.hass.formatEntityState(this.notification)}
+        </mwc-button>
       </notification-item-template>
     `;
   }

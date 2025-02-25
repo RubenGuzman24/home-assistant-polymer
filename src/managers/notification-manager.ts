@@ -1,21 +1,16 @@
-import {
-  LitElement,
-  query,
-  property,
-  TemplateResult,
-  html,
-  css,
-  CSSResult,
-} from "lit-element";
+import { mdiClose } from "@mdi/js";
+import { html, LitElement, nothing } from "lit";
+import { property, query, state } from "lit/decorators";
 import { computeRTL } from "../common/util/compute_rtl";
-import { HomeAssistant } from "../types";
-import "@material/mwc-button";
+import "../components/ha-button";
 import "../components/ha-toast";
-// Typing
-// tslint:disable-next-line: no-duplicate-imports
-import { HaToast } from "../components/ha-toast";
+import "../components/ha-icon-button";
+import type { HaToast } from "../components/ha-toast";
+import type { HomeAssistant } from "../types";
 
 export interface ShowToastParams {
+  // Unique ID for the toast. If a new toast is shown with the same ID as the previous toast, it will be replaced to avoid flickering.
+  id?: string;
   message: string;
   action?: ToastActionParams;
   duration?: number;
@@ -28,71 +23,89 @@ export interface ToastActionParams {
 }
 
 class NotificationManager extends LitElement {
-  @property() public hass!: HomeAssistant;
+  @property({ attribute: false }) public hass!: HomeAssistant;
 
-  @property() private _action?: ToastActionParams;
-  @property() private _noCancelOnOutsideClick: boolean = false;
+  @state() private _parameters?: ShowToastParams;
 
-  @query("ha-toast") private _toast!: HaToast;
+  @query("ha-toast") private _toast!: HaToast | undefined;
 
-  public async showDialog({
-    message,
-    action,
-    duration,
-    dismissable,
-  }: ShowToastParams) {
-    let toast = this._toast;
-    // Can happen on initial load
-    if (!toast) {
-      await this.updateComplete;
-      toast = this._toast;
+  public async showDialog(parameters: ShowToastParams) {
+    if (!parameters.id || this._parameters?.id !== parameters.id) {
+      this._toast?.close();
     }
-    toast.setAttribute("dir", computeRTL(this.hass) ? "rtl" : "ltr");
-    this._action = action || undefined;
-    this._noCancelOnOutsideClick =
-      dismissable === undefined ? false : !dismissable;
-    toast.hide();
-    toast.show({
-      text: message,
-      duration: duration === undefined ? 3000 : duration,
-    });
+
+    if (!parameters || parameters.duration === 0) {
+      this._parameters = undefined;
+      return;
+    }
+
+    this._parameters = parameters;
+
+    if (
+      this._parameters.duration === undefined ||
+      (this._parameters.duration > 0 && this._parameters.duration <= 4000)
+    ) {
+      this._parameters.duration = 4000;
+    }
+
+    await this.updateComplete;
+    this._toast?.show();
   }
 
-  protected render(): TemplateResult | void {
+  private _toastClosed() {
+    this._parameters = undefined;
+  }
+
+  protected render() {
+    if (!this._parameters) {
+      return nothing;
+    }
     return html`
-      <ha-toast .noCancelOnOutsideClick=${this._noCancelOnOutsideClick}>
-        ${this._action
+      <ha-toast
+        leading
+        dir=${computeRTL(this.hass) ? "rtl" : "ltr"}
+        .labelText=${this._parameters.message}
+        .timeoutMs=${this._parameters.duration!}
+        @MDCSnackbar:closed=${this._toastClosed}
+      >
+        ${this._parameters?.action
           ? html`
-              <mwc-button
-                .label=${this._action.text}
-                @click=${this.buttonClicked}
-              ></mwc-button>
+              <ha-button
+                slot="action"
+                .label=${this._parameters?.action.text}
+                @click=${this._buttonClicked}
+              ></ha-button>
             `
-          : ""}
+          : nothing}
+        ${this._parameters?.dismissable
+          ? html`
+              <ha-icon-button
+                .label=${this.hass.localize("ui.common.close")}
+                .path=${mdiClose}
+                dialogAction="close"
+                slot="dismiss"
+              ></ha-icon-button>
+            `
+          : nothing}
       </ha-toast>
     `;
   }
 
-  private buttonClicked() {
-    this._toast.hide();
-    if (this._action) {
-      this._action.action();
+  private _buttonClicked() {
+    this._toast?.close("action");
+    if (this._parameters?.action) {
+      this._parameters?.action.action();
     }
-  }
-
-  static get styles(): CSSResult {
-    return css`
-      mwc-button {
-        color: var(--primary-color);
-        font-weight: bold;
-      }
-    `;
   }
 }
 
 customElements.define("notification-manager", NotificationManager);
 
 declare global {
+  interface HTMLElementTagNameMap {
+    "notification-manager": NotificationManager;
+  }
+
   // for fire event
   interface HASSDomEvents {
     "hass-notification": ShowToastParams;

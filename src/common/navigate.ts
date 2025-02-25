@@ -1,33 +1,65 @@
+import { closeAllDialogs } from "../dialogs/make-dialog-manager";
 import { fireEvent } from "./dom/fire_event";
+import { mainWindow } from "./dom/get_main_window";
 
 declare global {
   // for fire event
   interface HASSDomEvents {
-    "location-changed": {
-      replace: boolean;
-    };
+    "location-changed": NavigateOptions;
   }
 }
 
-export const navigate = (
-  _node: any,
+export interface NavigateOptions {
+  replace?: boolean;
+  data?: any;
+}
+
+// max time to wait for dialogs to close before navigating
+const DIALOG_WAIT_TIMEOUT = 500;
+
+export const navigate = async (
   path: string,
-  replace: boolean = false
+  options?: NavigateOptions,
+  timestamp = Date.now()
 ) => {
+  const { history } = mainWindow;
+  if (history.state?.dialog && Date.now() - timestamp < DIALOG_WAIT_TIMEOUT) {
+    const closed = await closeAllDialogs();
+    if (!closed) {
+      // eslint-disable-next-line no-console
+      console.warn("Navigation blocked, because dialog refused to close");
+      return false;
+    }
+    return new Promise<boolean>((resolve) => {
+      // need to wait for history state to be updated in case a dialog was closed
+      setTimeout(() => {
+        navigate(path, options, timestamp).then(resolve);
+      });
+    });
+  }
+  const replace = options?.replace || false;
+
   if (__DEMO__) {
     if (replace) {
-      history.replaceState(null, "", `${location.pathname}#${path}`);
+      history.replaceState(
+        history.state?.root ? { root: true } : (options?.data ?? null),
+        "",
+        `${mainWindow.location.pathname}#${path}`
+      );
     } else {
-      window.location.hash = path;
+      mainWindow.location.hash = path;
     }
+  } else if (replace) {
+    history.replaceState(
+      history.state?.root ? { root: true } : (options?.data ?? null),
+      "",
+      path
+    );
   } else {
-    if (replace) {
-      history.replaceState(null, "", path);
-    } else {
-      history.pushState(null, "", path);
-    }
+    history.pushState(options?.data ?? null, "", path);
   }
-  fireEvent(window, "location-changed", {
+  fireEvent(mainWindow, "location-changed", {
     replace,
   });
+  return true;
 };

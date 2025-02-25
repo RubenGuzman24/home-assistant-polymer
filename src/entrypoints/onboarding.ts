@@ -1,7 +1,11 @@
-import "../components/ha-iconset-svg";
-import "../resources/ha-style";
-import "../resources/roboto";
+// Compat needs to be first import
+import "../resources/compatibility";
 import "../onboarding/ha-onboarding";
+
+import("../resources/ha-style");
+import("@polymer/polymer/lib/utils/settings").then(
+  ({ setCancelSyntheticClickEvents }) => setCancelSyntheticClickEvents(false)
+);
 
 declare global {
   interface Window {

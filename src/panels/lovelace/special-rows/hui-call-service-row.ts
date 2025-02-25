@@ -1,81 +1,34 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-  css,
-  CSSResult,
-} from "lit-element";
-import "@material/mwc-button";
-
-import "../../../components/ha-icon";
-
-import { callService } from "../common/call-service";
-import { EntityRow, CallServiceConfig } from "../entity-rows/types";
-import { HomeAssistant } from "../../../types";
+import { customElement } from "lit/decorators";
+import type { CallServiceConfig } from "../entity-rows/types";
+import { HuiButtonRow } from "./hui-button-row";
 
 @customElement("hui-call-service-row")
-class HuiCallServiceRow extends LitElement implements EntityRow {
-  public hass?: HomeAssistant;
+export class HuiCallServiceRow extends HuiButtonRow {
+  public setConfig(config: any): void {
+    const callServiceConfig: CallServiceConfig = config;
 
-  @property() private _config?: CallServiceConfig;
-
-  public setConfig(config: CallServiceConfig): void {
-    if (!config || !config.name || !config.service) {
-      throw new Error("Error in card configuration.");
+    if (!callServiceConfig) {
+      throw new Error("Invalid configuration");
     }
 
-    this._config = { icon: "hass:remote", action_name: "Run", ...config };
-  }
-
-  protected render(): TemplateResult | void {
-    if (!this._config) {
-      return html``;
+    if (!callServiceConfig.name) {
+      throw new Error("No name specified");
     }
 
-    return html`
-      <ha-icon .icon="${this._config.icon}"></ha-icon>
-      <div class="flex">
-        <div>${this._config.name}</div>
-        <mwc-button @click="${this._callService}"
-          >${this._config.action_name}</mwc-button
-        >
-      </div>
-    `;
-  }
+    if (!callServiceConfig.action && !callServiceConfig.service) {
+      throw new Error("No action specified");
+    }
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        display: flex;
-        align-items: center;
-      }
-      ha-icon {
-        padding: 8px;
-        color: var(--paper-item-icon-color);
-      }
-      .flex {
-        flex: 1;
-        overflow: hidden;
-        margin-left: 16px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      .flex div {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      mwc-button {
-        margin-right: -0.57em;
-      }
-    `;
-  }
-
-  private _callService() {
-    callService(this._config!, this.hass!);
+    super.setConfig({
+      tap_action: {
+        action: "perform-action",
+        perform_action: (callServiceConfig.action ||
+          callServiceConfig.service)!,
+        data: callServiceConfig.data || callServiceConfig.service_data,
+      },
+      ...callServiceConfig,
+      type: "button",
+    });
   }
 }
 

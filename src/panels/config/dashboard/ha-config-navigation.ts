@@ -1,78 +1,76 @@
-import "@polymer/iron-icon/iron-icon";
-import "@polymer/paper-item/paper-item-body";
-import "@polymer/paper-item/paper-item";
-
-import isComponentLoaded from "../../../common/config/is_component_loaded";
-
+import "@material/mwc-list/mwc-list";
+import "@material/mwc-list/mwc-list-item";
+import type { CSSResultGroup, TemplateResult } from "lit";
+import { css, html, LitElement } from "lit";
+import { customElement, property } from "lit/decorators";
+import { canShowPage } from "../../../common/config/can_show_page";
 import "../../../components/ha-card";
 import "../../../components/ha-icon-next";
-import {
-  LitElement,
-  html,
-  TemplateResult,
-  property,
-  customElement,
-  CSSResult,
-  css,
-} from "lit-element";
-import { HomeAssistant } from "../../../types";
-
-const PAGES: Array<{
-  page: string;
-  core?: boolean;
-  advanced?: boolean;
-}> = [
-  { page: "core", core: true },
-  { page: "person" },
-  { page: "entity_registry", core: true },
-  { page: "area_registry", core: true },
-  { page: "automation" },
-  { page: "script" },
-  { page: "zha" },
-  { page: "zwave" },
-  { page: "customize", core: true, advanced: true },
-];
+import "../../../components/ha-navigation-list";
+import type { CloudStatus } from "../../../data/cloud";
+import type { PageNavigation } from "../../../layouts/hass-tabs-subpage";
+import type { HomeAssistant } from "../../../types";
 
 @customElement("ha-config-navigation")
 class HaConfigNavigation extends LitElement {
-  @property() public hass!: HomeAssistant;
-  @property() public showAdvanced!: boolean;
+  @property({ attribute: false }) public hass!: HomeAssistant;
 
-  protected render(): TemplateResult | void {
+  @property({ type: Boolean }) public narrow = false;
+
+  @property({ attribute: false }) public pages!: PageNavigation[];
+
+  protected render(): TemplateResult {
+    const pages = this.pages
+      .filter((page) =>
+        page.path === "#external-app-configuration"
+          ? this.hass.auth.external?.config.hasSettingsScreen
+          : canShowPage(this.hass, page)
+      )
+      .map((page) => ({
+        ...page,
+        name:
+          page.name ||
+          this.hass.localize(
+            `ui.panel.config.dashboard.${page.translationKey}.main`
+          ),
+        description:
+          page.component === "cloud" && (page.info as CloudStatus)
+            ? page.info.logged_in
+              ? `
+                  ${this.hass.localize(
+                    "ui.panel.config.cloud.description_login"
+                  )}
+                `
+              : `
+                  ${this.hass.localize(
+                    "ui.panel.config.cloud.description_features"
+                  )}
+                `
+            : `
+                ${
+                  page.description ||
+                  this.hass.localize(
+                    `ui.panel.config.dashboard.${page.translationKey}.secondary`
+                  )
+                }
+              `,
+      }));
     return html`
-      <ha-card>
-        ${PAGES.map(({ page, core, advanced }) =>
-          (core || isComponentLoaded(this.hass, page)) &&
-          (!advanced || this.showAdvanced)
-            ? html`
-                <a href=${`/config/${page}`}>
-                  <paper-item>
-                    <paper-item-body two-line="">
-                      ${this.hass.localize(`ui.panel.config.${page}.caption`)}
-                      <div secondary>
-                        ${this.hass.localize(
-                          `ui.panel.config.${page}.description`
-                        )}
-                      </div>
-                    </paper-item-body>
-                    <ha-icon-next></ha-icon-next>
-                  </paper-item>
-                </a>
-              `
-            : ""
-        )}
-      </ha-card>
+      <ha-navigation-list
+        has-secondary
+        .hass=${this.hass}
+        .narrow=${this.narrow}
+        .pages=${pages}
+        .label=${this.hass.localize("panel.config")}
+      ></ha-navigation-list>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      a {
-        text-decoration: none;
-        color: var(--primary-text-color);
-      }
-    `;
-  }
+  static styles: CSSResultGroup = css`
+    ha-navigation-list {
+      --navigation-list-item-title-font-size: 16px;
+    }
+  `;
 }
 
 declare global {

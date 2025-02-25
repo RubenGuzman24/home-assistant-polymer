@@ -1,11 +1,15 @@
-import { HassEntity } from "home-assistant-js-websocket";
+import type { HassEntity } from "home-assistant-js-websocket";
 import { supportsFeature } from "./supports-feature";
 
+export type FeatureClassNames<T extends number = number> = Partial<
+  Record<T, string>
+>;
+
 // Expects classNames to be an object mapping feature-bit -> className
-export default function featureClassNames(
+export const featureClassNames = (
   stateObj: HassEntity,
-  classNames: { [feature: number]: string }
-) {
+  classNames: FeatureClassNames
+) => {
   if (!stateObj || !stateObj.attributes.supported_features) {
     return "";
   }
@@ -16,4 +20,4 @@ export default function featureClassNames(
     )
     .filter((attr) => attr !== "")
     .join(" ");
-}
+};

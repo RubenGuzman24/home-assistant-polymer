@@ -1,48 +1,50 @@
-import { html, TemplateResult } from "lit-element";
-
+import type { CSSResultGroup } from "lit";
+import { css } from "lit";
+import { customElement } from "lit/decorators";
 import { computeCardSize } from "../common/compute-card-size";
 import { HuiStackCard } from "./hui-stack-card";
 
-class HuiHorizontalStackCard extends HuiStackCard {
-  public getCardSize(): number {
-    let totalSize = 0;
-
-    if (this._cards) {
-      for (const element of this._cards) {
-        const elementSize = computeCardSize(element);
-        totalSize = elementSize > totalSize ? elementSize : totalSize;
-      }
+@customElement("hui-horizontal-stack-card")
+export class HuiHorizontalStackCard extends HuiStackCard {
+  public async getCardSize(): Promise<number> {
+    if (!this._cards) {
+      return 0;
     }
 
-    return totalSize;
+    const promises: (Promise<number> | number)[] = [];
+
+    for (const element of this._cards) {
+      promises.push(computeCardSize(element));
+    }
+
+    const results = await Promise.all(promises);
+
+    return Math.max(...results);
   }
 
-  protected renderStyle(): TemplateResult {
-    return html`
-      <style>
+  static get styles(): CSSResultGroup {
+    return [
+      super.sharedStyles,
+      css`
         #root {
           display: flex;
+          height: 100%;
+          gap: var(--horizontal-stack-card-gap, var(--stack-card-gap, 8px));
         }
-        #root > * {
+        #root > hui-card {
+          display: contents;
+        }
+        #root > hui-card > * {
           flex: 1 1 0;
-          margin: 0 4px;
           min-width: 0;
         }
-        #root > *:first-child {
-          margin-left: 0;
-        }
-        #root > *:last-child {
-          margin-right: 0;
-        }
-      </style>
-    `;
+      `,
+    ];
   }
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    "hui-horitzontal-stack-card": HuiHorizontalStackCard;
+    "hui-horizontal-stack-card": HuiHorizontalStackCard;
   }
 }
-
-customElements.define("hui-horizontal-stack-card", HuiHorizontalStackCard);

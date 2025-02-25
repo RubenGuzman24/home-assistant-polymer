@@ -3,30 +3,28 @@
 // Returns a function, that, as long as it continues to be invoked, will not
 // be triggered. The function will be called after it stops being called for
 // N milliseconds. If `immediate` is passed, trigger the function on the
-// leading edge, instead of the trailing.
-// tslint:disable-next-line: ban-types
-export const debounce = <T extends Function>(
-  func: T,
-  wait,
+// leading edge and on the trailing.
+
+export const debounce = <T extends any[]>(
+  func: (...args: T) => void,
+  wait: number,
   immediate = false
-): T => {
-  let timeout;
-  // @ts-ignore
-  return function(...args) {
-    // tslint:disable:no-this-assignment
-    // @ts-ignore
-    const context = this;
+) => {
+  let timeout: number | undefined;
+  const debouncedFunc = (...args: T): void => {
     const later = () => {
-      timeout = null;
-      if (!immediate) {
-        func.apply(context, args);
-      }
+      timeout = undefined;
+      func(...args);
     };
     const callNow = immediate && !timeout;
     clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
+    timeout = window.setTimeout(later, wait);
     if (callNow) {
-      func.apply(context, args);
+      func(...args);
     }
   };
+  debouncedFunc.cancel = () => {
+    clearTimeout(timeout);
+  };
+  return debouncedFunc;
 };

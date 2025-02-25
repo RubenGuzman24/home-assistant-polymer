@@ -1,126 +1,124 @@
-import {
-  html,
-  css,
-  LitElement,
-  TemplateResult,
-  property,
-  customElement,
-} from "lit-element";
+import { mdiCalendar } from "@mdi/js";
+import type { HassConfig } from "home-assistant-js-websocket";
+import { css, html, LitElement } from "lit";
+import { customElement, property } from "lit/decorators";
+import { firstWeekdayIndex } from "../common/datetime/first_weekday";
+import { formatDateNumeric } from "../common/datetime/format_date";
+import { fireEvent } from "../common/dom/fire_event";
+import { TimeZone } from "../data/translation";
+import type { HomeAssistant } from "../types";
+import "./ha-svg-icon";
+import "./ha-textfield";
 
-import "@polymer/paper-input/paper-input";
-// tslint:disable-next-line:no-duplicate-imports
-import { PaperInputElement } from "@polymer/paper-input/paper-input";
+const loadDatePickerDialog = () => import("./ha-dialog-date-picker");
 
-@customElement("ha-date-input")
-export class HaDateInput extends LitElement {
-  @property() public year?: string;
-  @property() public month?: string;
-  @property() public day?: string;
-  @property({ type: Boolean }) public disabled = false;
-
-  static get styles() {
-    return css`
-      :host {
-        display: block;
-        font-family: var(--paper-font-common-base_-_font-family);
-        -webkit-font-smoothing: var(
-          --paper-font-common-base_-_-webkit-font-smoothing
-        );
-      }
-
-      paper-input {
-        width: 30px;
-        text-align: center;
-        --paper-input-container-shared-input-style_-_-webkit-appearance: textfield;
-        --paper-input-container-input_-_-moz-appearance: textfield;
-        --paper-input-container-shared-input-style_-_appearance: textfield;
-        --paper-input-container-input-webkit-spinner_-_-webkit-appearance: none;
-        --paper-input-container-input-webkit-spinner_-_margin: 0;
-        --paper-input-container-input-webkit-spinner_-_display: none;
-      }
-
-      paper-input#year {
-        width: 50px;
-      }
-
-      .date-input-wrap {
-        display: flex;
-        flex-direction: row;
-      }
-    `;
-  }
-
-  protected render(): TemplateResult {
-    return html`
-      <div class="date-input-wrap">
-        <paper-input
-          id="year"
-          type="number"
-          .value=${this.year}
-          @change=${this._formatYear}
-          maxlength="4"
-          max="9999"
-          min="0"
-          .disabled=${this.disabled}
-          no-label-float
-        >
-          <span suffix="" slot="suffix">-</span>
-        </paper-input>
-        <paper-input
-          id="month"
-          type="number"
-          .value=${this.month}
-          @change=${this._formatMonth}
-          maxlength="2"
-          max="12"
-          min="1"
-          .disabled=${this.disabled}
-          no-label-float
-        >
-          <span suffix="" slot="suffix">-</span>
-        </paper-input>
-        <paper-input
-          id="day"
-          type="number"
-          .value=${this.day}
-          @change=${this._formatDay}
-          maxlength="2"
-          max="31"
-          min="1"
-          .disabled=${this.disabled}
-          no-label-float
-        >
-        </paper-input>
-      </div>
-    `;
-  }
-
-  private _formatYear() {
-    const yearElement = this.shadowRoot!.getElementById(
-      "year"
-    ) as PaperInputElement;
-    this.year = yearElement.value!;
-  }
-
-  private _formatMonth() {
-    const monthElement = this.shadowRoot!.getElementById(
-      "month"
-    ) as PaperInputElement;
-    this.month = ("0" + monthElement.value!).slice(-2);
-  }
-
-  private _formatDay() {
-    const dayElement = this.shadowRoot!.getElementById(
-      "day"
-    ) as PaperInputElement;
-    this.day = ("0" + dayElement.value!).slice(-2);
-  }
-
-  get value() {
-    return `${this.year}-${this.month}-${this.day}`;
-  }
+export interface DatePickerDialogParams {
+  value?: string;
+  min?: string;
+  max?: string;
+  locale?: string;
+  firstWeekday?: number;
+  canClear?: boolean;
+  onChange: (value: string | undefined) => void;
 }
 
+const showDatePickerDialog = (
+  element: HTMLElement,
+  dialogParams: DatePickerDialogParams
+): void => {
+  fireEvent(element, "show-dialog", {
+    dialogTag: "ha-dialog-date-picker",
+    dialogImport: loadDatePickerDialog,
+    dialogParams,
+  });
+};
+@customElement("ha-date-input")
+export class HaDateInput extends LitElement {
+  @property({ attribute: false }) public locale!: HomeAssistant["locale"];
+
+  @property() public value?: string;
+
+  @property() public min?: string;
+
+  @property() public max?: string;
+
+  @property({ type: Boolean }) public disabled = false;
+
+  @property({ type: Boolean }) public required = false;
+
+  @property() public label?: string;
+
+  @property() public helper?: string;
+
+  @property({ attribute: "can-clear", type: Boolean }) public canClear = false;
+
+  render() {
+    return html`<ha-textfield
+      .label=${this.label}
+      .helper=${this.helper}
+      .disabled=${this.disabled}
+      iconTrailing
+      helperPersistent
+      readonly
+      @click=${this._openDialog}
+      @keydown=${this._keyDown}
+      .value=${this.value
+        ? formatDateNumeric(
+            new Date(`${this.value.split("T")[0]}T00:00:00`),
+            {
+              ...this.locale,
+              time_zone: TimeZone.local,
+            },
+            {} as HassConfig
+          )
+        : ""}
+      .required=${this.required}
+    >
+      <ha-svg-icon slot="trailingIcon" .path=${mdiCalendar}></ha-svg-icon>
+    </ha-textfield>`;
+  }
+
+  private _openDialog() {
+    if (this.disabled) {
+      return;
+    }
+    showDatePickerDialog(this, {
+      min: this.min || "1970-01-01",
+      max: this.max,
+      value: this.value,
+      canClear: this.canClear,
+      onChange: (value) => this._valueChanged(value),
+      locale: this.locale.language,
+      firstWeekday: firstWeekdayIndex(this.locale),
+    });
+  }
+
+  private _keyDown(ev: KeyboardEvent) {
+    if (!this.canClear) {
+      return;
+    }
+    if (["Backspace", "Delete"].includes(ev.key)) {
+      this._valueChanged(undefined);
+    }
+  }
+
+  private _valueChanged(value: string | undefined) {
+    if (this.value !== value) {
+      this.value = value;
+      fireEvent(this, "change");
+      fireEvent(this, "value-changed", { value });
+    }
+  }
+
+  static styles = css`
+    ha-svg-icon {
+      color: var(--secondary-text-color);
+    }
+    ha-textfield {
+      display: block;
+    }
+  `;
+}
 declare global {
   interface HTMLElementTagNameMap {
     "ha-date-input": HaDateInput;

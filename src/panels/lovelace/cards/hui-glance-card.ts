@@ -1,58 +1,93 @@
-import {
-  html,
-  LitElement,
-  PropertyValues,
-  TemplateResult,
-  customElement,
-  property,
-  css,
-  CSSResult,
-} from "lit-element";
-import { classMap } from "lit-html/directives/class-map";
-
-import computeStateDisplay from "../../../common/entity/compute_state_display";
-import computeStateName from "../../../common/entity/compute_state_name";
-import applyThemesOnElement from "../../../common/dom/apply_themes_on_element";
-
+import type { PropertyValues, TemplateResult } from "lit";
+import { LitElement, css, html, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { classMap } from "lit/directives/class-map";
+import { ifDefined } from "lit/directives/if-defined";
+import { applyThemesOnElement } from "../../../common/dom/apply_themes_on_element";
+import { computeDomain } from "../../../common/entity/compute_domain";
+import { computeStateName } from "../../../common/entity/compute_state_name";
 import "../../../components/entity/state-badge";
 import "../../../components/ha-card";
 import "../../../components/ha-icon";
-import "../components/hui-warning-element";
-
-import { HomeAssistant } from "../../../types";
-import { LovelaceCard, LovelaceCardEditor } from "../types";
-import { longPress } from "../common/directives/long-press-directive";
+import "../../../components/ha-relative-time";
+import { isUnavailableState } from "../../../data/entity";
+import type { ActionHandlerEvent } from "../../../data/lovelace/action_handler";
+import type {
+  CallServiceActionConfig,
+  MoreInfoActionConfig,
+} from "../../../data/lovelace/config/action";
+import { SENSOR_DEVICE_CLASS_TIMESTAMP } from "../../../data/sensor";
+import type { HomeAssistant } from "../../../types";
+import { actionHandler } from "../common/directives/action-handler-directive";
+import { findEntities } from "../common/find-entities";
+import { handleAction } from "../common/handle-action";
+import { hasAction, hasAnyAction } from "../common/has-action";
+import { hasConfigOrEntitiesChanged } from "../common/has-changed";
 import { processConfigEntities } from "../common/process-config-entities";
-import { handleClick } from "../common/handle-click";
-import { GlanceCardConfig, ConfigEntity } from "./types";
+import "../components/hui-timestamp-display";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import "../components/hui-warning-element";
+import type { LovelaceCard, LovelaceCardEditor } from "../types";
+import type { GlanceCardConfig, GlanceConfigEntity } from "./types";
 
 @customElement("hui-glance-card")
 export class HuiGlanceCard extends LitElement implements LovelaceCard {
   public static async getConfigElement(): Promise<LovelaceCardEditor> {
-    await import(/* webpackChunkName: "hui-glance-card-editor" */ "../editor/config-elements/hui-glance-card-editor");
+    await import("../editor/config-elements/hui-glance-card-editor");
     return document.createElement("hui-glance-card-editor");
   }
 
-  public static getStubConfig(): object {
-    return { entities: [] };
+  public static getStubConfig(
+    hass: HomeAssistant,
+    entities: string[],
+    entitiesFallback: string[]
+  ): GlanceCardConfig {
+    const includeDomains = ["sensor"];
+    const maxEntities = 3;
+    const foundEntities = findEntities(
+      hass,
+      maxEntities,
+      entities,
+      entitiesFallback,
+      includeDomains
+    );
+
+    return { type: "glance", entities: foundEntities };
   }
 
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: GlanceCardConfig;
+  @state() private _config?: GlanceCardConfig;
 
-  private _configEntities?: ConfigEntity[];
+  private _configEntities?: GlanceConfigEntity[];
 
   public getCardSize(): number {
-    return (
-      (this._config!.title ? 1 : 0) +
-      Math.ceil(this._configEntities!.length / 5)
+    const rowHeight =
+      (this._config!.show_icon ? 1 : 0) +
+      (this._config!.show_name ? 1 : 0) +
+      (this._config!.show_state ? 1 : 0);
+
+    const numRows = Math.ceil(
+      this._configEntities!.length / (this._config!.columns || 5)
     );
+
+    return (this._config!.title ? 2 : 0) + rowHeight * numRows;
   }
 
   public setConfig(config: GlanceCardConfig): void {
-    this._config = { theme: "default", ...config };
-    const entities = processConfigEntities<ConfigEntity>(config.entities);
+    this._config = {
+      show_name: true,
+      show_state: true,
+      show_icon: true,
+      state_color: true,
+      ...config,
+    };
+    const entities = processConfigEntities(config.entities).map(
+      (entityConf) => ({
+        hold_action: { action: "more-info" } as MoreInfoActionConfig,
+        ...entityConf,
+      })
+    );
 
     for (const entity of entities) {
       if (
@@ -61,7 +96,7 @@ export class HuiGlanceCard extends LitElement implements LovelaceCard {
           !entity.tap_action.service) ||
         (entity.hold_action &&
           entity.hold_action.action === "call-service" &&
-          !entity.hold_action.service)
+          !(entity.hold_action as CallServiceActionConfig).service)
       ) {
         throw new Error(
           'Missing required property "service" when tap_action or hold_action is call-service'
@@ -80,137 +115,199 @@ export class HuiGlanceCard extends LitElement implements LovelaceCard {
   }
 
   protected shouldUpdate(changedProps: PropertyValues): boolean {
-    if (changedProps.has("_config")) {
-      return true;
-    }
-
-    const oldHass = changedProps.get("hass") as HomeAssistant | undefined;
-    if (oldHass && this._configEntities) {
-      for (const entity of this._configEntities) {
-        if (
-          oldHass.states[entity.entity] !== this.hass!.states[entity.entity]
-        ) {
-          return true;
-        }
-      }
-      return false;
-    }
-    return true;
+    return hasConfigOrEntitiesChanged(this, changedProps);
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
     const { title } = this._config;
 
     return html`
-      <ha-card .header="${title}">
-        <div class="${classMap({ entities: true, "no-header": !title })}">
+      <ha-card .header=${title}>
+        <div class=${classMap({ entities: true, "no-header": !title })}>
           ${this._configEntities!.map((entityConf) =>
-            this.renderEntity(entityConf)
+            this._renderEntity(entityConf)
           )}
         </div>
       </ha-card>
     `;
   }
 
-  protected updated(changedProperties: PropertyValues): void {
-    super.updated(changedProperties);
+  protected updated(changedProps: PropertyValues): void {
+    super.updated(changedProps);
     if (!this._config || !this.hass) {
       return;
     }
 
-    const oldHass = changedProperties.get("hass") as HomeAssistant | undefined;
-    if (!oldHass || oldHass.themes !== this.hass.themes) {
+    const oldHass = changedProps.get("hass") as HomeAssistant | undefined;
+    const oldConfig = changedProps.get("_config") as
+      | GlanceCardConfig
+      | undefined;
+
+    if (
+      !oldHass ||
+      !oldConfig ||
+      oldHass.themes !== this.hass.themes ||
+      oldConfig.theme !== this._config.theme
+    ) {
       applyThemesOnElement(this, this.hass.themes, this._config.theme);
     }
   }
 
-  static get styles(): CSSResult {
-    return css`
-      .entities {
-        display: flex;
-        padding: 0 16px 4px;
-        flex-wrap: wrap;
-      }
-      .entities.no-header {
-        padding-top: 16px;
-      }
-      .entity {
-        box-sizing: border-box;
-        padding: 0 4px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        cursor: pointer;
-        margin-bottom: 12px;
-        width: var(--glance-column-width, 20%);
-      }
-      .entity div {
-        width: 100%;
-        text-align: center;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .name {
-        min-height: var(--paper-font-body1_-_line-height, 20px);
-      }
-      state-badge {
-        margin: 8px 0;
-      }
-    `;
-  }
+  static styles = css`
+    ha-card {
+      height: 100%;
+    }
+    .entities {
+      display: flex;
+      padding: 0 16px 4px;
+      flex-wrap: wrap;
+      box-sizing: border-box;
+      align-items: center;
+      align-content: center;
+    }
+    .entities.no-header {
+      padding-top: 16px;
+    }
+    .entity {
+      box-sizing: border-box;
+      padding: 0 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 12px;
+      width: var(--glance-column-width, 20%);
+    }
+    .entity.action {
+      cursor: pointer;
+    }
+    .entity:focus {
+      outline: none;
+      background: var(--divider-color);
+      border-radius: 14px;
+      padding: 4px;
+      margin-top: -4px;
+      margin-bottom: 8px;
+    }
+    .entity div {
+      width: 100%;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .name {
+      min-height: var(--paper-font-body1_-_line-height, 20px);
+    }
+    .warning {
+      cursor: default;
+      position: relative;
+      padding: 8px;
+      width: calc(var(--glance-column-width, 20%) - 4px);
+      margin: 0 2px;
+    }
+    .warning::before {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      opacity: 0.12;
+      pointer-events: none;
+      content: "";
+      border-radius: 4px;
+      background-color: var(--warning-color);
+    }
+    state-badge {
+      margin: 8px 0;
+    }
+    hui-warning-element {
+      padding: 8px;
+    }
+  `;
 
-  private renderEntity(entityConf): TemplateResult {
+  private _renderEntity(entityConf: GlanceConfigEntity): TemplateResult {
     const stateObj = this.hass!.states[entityConf.entity];
 
     if (!stateObj) {
-      return html`
-        <hui-warning-element
-          label=${this.hass!.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            entityConf.entity
-          )}
-        ></hui-warning-element>
-      `;
-    }
-
-    return html`
-      <div
-        class="entity"
-        .entityConf="${entityConf}"
-        @ha-click="${this._handleTap}"
-        @ha-hold="${this._handleHold}"
-        .longPress="${longPress()}"
-      >
-        ${this._config!.show_name !== false
+      return html`<div class="entity warning">
+        ${this._config!.show_name
           ? html`
               <div class="name">
-                ${"name" in entityConf
-                  ? entityConf.name
-                  : computeStateName(stateObj)}
+                ${createEntityNotFoundWarning(this.hass!, entityConf.entity)}
               </div>
             `
           : ""}
-        ${this._config!.show_icon !== false
+        ${this._config!.show_icon
+          ? html` <hui-warning-element
+              .label=${createEntityNotFoundWarning(
+                this.hass!,
+                entityConf.entity
+              )}
+            ></hui-warning-element>`
+          : ""}
+        <div>${this._config!.show_state ? entityConf.entity : ""}</div>
+      </div>`;
+    }
+
+    const name = entityConf.name ?? computeStateName(stateObj);
+
+    return html`
+      <div
+        class=${classMap({ entity: true, action: hasAnyAction(entityConf) })}
+        .config=${entityConf}
+        @action=${this._handleAction}
+        .actionHandler=${actionHandler({
+          hasHold: hasAction(entityConf.hold_action),
+          hasDoubleClick: hasAction(entityConf.double_tap_action),
+        })}
+        tabindex=${ifDefined(
+          !entityConf.tap_action || hasAction(entityConf.tap_action)
+            ? "0"
+            : undefined
+        )}
+      >
+        ${this._config!.show_name
+          ? html` <div class="name" .title=${name}>${name}</div> `
+          : ""}
+        ${this._config!.show_icon
           ? html`
               <state-badge
-                .stateObj="${stateObj}"
-                .overrideIcon="${entityConf.icon}"
+                .hass=${this.hass}
+                .stateObj=${stateObj}
+                .overrideIcon=${entityConf.icon}
+                .overrideImage=${entityConf.image}
+                .stateColor=${entityConf.state_color ??
+                this._config!.state_color}
               ></state-badge>
             `
           : ""}
-        ${this._config!.show_state !== false
+        ${this._config!.show_state && entityConf.show_state !== false
           ? html`
               <div>
-                ${computeStateDisplay(
-                  this.hass!.localize,
-                  stateObj,
-                  this.hass!.language
-                )}
+                ${computeDomain(entityConf.entity) === "sensor" &&
+                stateObj.attributes.device_class ===
+                  SENSOR_DEVICE_CLASS_TIMESTAMP &&
+                !isUnavailableState(stateObj.state)
+                  ? html`
+                      <hui-timestamp-display
+                        .hass=${this.hass}
+                        .ts=${new Date(stateObj.state)}
+                        .format=${entityConf.format}
+                        capitalize
+                      ></hui-timestamp-display>
+                    `
+                  : entityConf.show_last_changed
+                    ? html`
+                        <ha-relative-time
+                          .hass=${this.hass}
+                          .datetime=${stateObj.last_changed}
+                          capitalize
+                        ></ha-relative-time>
+                      `
+                    : this.hass!.formatEntityState(stateObj)}
               </div>
             `
           : ""}
@@ -218,14 +315,9 @@ export class HuiGlanceCard extends LitElement implements LovelaceCard {
     `;
   }
 
-  private _handleTap(ev: MouseEvent): void {
-    const config = (ev.currentTarget as any).entityConf as ConfigEntity;
-    handleClick(this, this.hass!, config, false);
-  }
-
-  private _handleHold(ev: MouseEvent): void {
-    const config = (ev.currentTarget as any).entityConf as ConfigEntity;
-    handleClick(this, this.hass!, config, true);
+  private _handleAction(ev: ActionHandlerEvent) {
+    const config = (ev.currentTarget as any).config as GlanceConfigEntity;
+    handleAction(this, this.hass!, config, ev.detail.action!);
   }
 }
 

@@ -1,80 +1,72 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  property,
-  customElement,
-  css,
-  CSSResult,
-} from "lit-element";
-import "@material/mwc-button";
-import "@polymer/paper-tooltip/paper-tooltip";
-
-import "../../components/ha-relative-time";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property } from "lit/decorators";
+import { formatDateTime } from "../../common/datetime/format_date_time";
 import "../../components/ha-markdown";
+import "../../components/ha-relative-time";
+import "../../components/ha-tooltip";
+import "../../components/ha-button";
+import type { PersistentNotification } from "../../data/persistent_notification";
+import type { HomeAssistant } from "../../types";
 import "./notification-item-template";
-
-import { HomeAssistant } from "../../types";
-import { PersistentNotification } from "../../data/persistent_notification";
 
 @customElement("persistent-notification-item")
 export class HuiPersistentNotificationItem extends LitElement {
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() public notification?: PersistentNotification;
+  @property({ attribute: false }) public notification?: PersistentNotification;
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this.hass || !this.notification) {
-      return html``;
+      return nothing;
     }
 
     return html`
       <notification-item-template>
-        <span slot="header">
-          ${this.notification.title || this.notification.notification_id}
-        </span>
+        <span slot="header"> ${this.notification.title} </span>
 
-        <ha-markdown content="${this.notification.message}"></ha-markdown>
+        <ha-markdown breaks content=${this.notification.message}></ha-markdown>
 
         <div class="time">
           <span>
-            <ha-relative-time
-              .hass="${this.hass}"
-              .datetime="${this.notification.created_at}"
-            ></ha-relative-time>
-            <paper-tooltip
-              >${this._computeTooltip(
-                this.hass,
-                this.notification
-              )}</paper-tooltip
+            <ha-tooltip
+              .content=${this._computeTooltip(this.hass, this.notification)}
+              placement="bottom"
             >
+              <ha-relative-time
+                .hass=${this.hass}
+                .datetime=${this.notification.created_at}
+                capitalize
+              ></ha-relative-time>
+            </ha-tooltip>
           </span>
         </div>
 
-        <mwc-button slot="actions" @click="${this._handleDismiss}"
+        <ha-button slot="actions" @click=${this._handleDismiss}
           >${this.hass.localize(
             "ui.card.persistent_notification.dismiss"
-          )}</mwc-button
+          )}</ha-button
         >
       </notification-item-template>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      .time {
-        display: flex;
-        justify-content: flex-end;
-        margin-top: 6px;
-      }
-      ha-relative-time {
-        color: var(--secondary-text-color);
-      }
-      a {
-        color: var(--primary-color);
-      }
-    `;
-  }
+  static styles = css`
+    .time {
+      position: relative;
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 6px;
+    }
+    ha-relative-time {
+      color: var(--secondary-text-color);
+    }
+    a {
+      color: var(--primary-color);
+    }
+    ha-markdown {
+      overflow-wrap: break-word;
+    }
+  `;
 
   private _handleDismiss(): void {
     this.hass!.callService("persistent_notification", "dismiss", {
@@ -91,13 +83,7 @@ export class HuiPersistentNotificationItem extends LitElement {
     }
 
     const d = new Date(notification.created_at!);
-    return d.toLocaleDateString(hass.language, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      minute: "numeric",
-      hour: "numeric",
-    });
+    return formatDateTime(d, hass.locale, hass.config);
   }
 }
 

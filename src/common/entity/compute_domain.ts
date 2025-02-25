@@ -1,3 +1,2 @@
-export default function computeDomain(entityId: string): string {
-  return entityId.substr(0, entityId.indexOf("."));
-}
+export const computeDomain = (entityId: string): string =>
+  entityId.substring(0, entityId.indexOf("."));

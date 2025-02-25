@@ -1,145 +1,169 @@
-import {
-  html,
-  LitElement,
-  PropertyValues,
-  TemplateResult,
-  css,
-  CSSResult,
-  property,
-  customElement,
-} from "lit-element";
-import { styleMap } from "lit-html/directives/style-map";
-
+import type { HassEntity } from "home-assistant-js-websocket/dist/types";
+import type { PropertyValues } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { ifDefined } from "lit/directives/if-defined";
+import { classMap } from "lit/directives/class-map";
+import { styleMap } from "lit/directives/style-map";
+import { applyThemesOnElement } from "../../../common/dom/apply_themes_on_element";
+import { computeStateName } from "../../../common/entity/compute_state_name";
+import { isValidEntityId } from "../../../common/entity/valid_entity_id";
+import { getNumberFormatOptions } from "../../../common/number/format_number";
 import "../../../components/ha-card";
-import "../components/hui-warning";
-
-import isValidEntityId from "../../../common/entity/valid_entity_id";
-import applyThemesOnElement from "../../../common/dom/apply_themes_on_element";
-import computeStateName from "../../../common/entity/compute_state_name";
-
-import { HomeAssistant } from "../../../types";
-import { fireEvent } from "../../../common/dom/fire_event";
+import "../../../components/ha-gauge";
+import { UNAVAILABLE } from "../../../data/entity";
+import type { ActionHandlerEvent } from "../../../data/lovelace/action_handler";
+import type { HomeAssistant } from "../../../types";
+import { actionHandler } from "../common/directives/action-handler-directive";
+import { findEntities } from "../common/find-entities";
+import { handleAction } from "../common/handle-action";
+import { hasAction, hasAnyAction } from "../common/has-action";
 import { hasConfigOrEntityChanged } from "../common/has-changed";
-import { LovelaceCard, LovelaceCardEditor } from "../types";
-import { GaugeCardConfig } from "./types";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { LovelaceCard, LovelaceCardEditor } from "../types";
+import type { GaugeCardConfig } from "./types";
+
+export const DEFAULT_MIN = 0;
+export const DEFAULT_MAX = 100;
 
 export const severityMap = {
-  red: "var(--label-badge-red)",
-  green: "var(--label-badge-green)",
-  yellow: "var(--label-badge-yellow)",
-  normal: "var(--label-badge-blue)",
+  red: "var(--error-color)",
+  green: "var(--success-color)",
+  yellow: "var(--warning-color)",
+  normal: "var(--info-color)",
 };
 
 @customElement("hui-gauge-card")
 class HuiGaugeCard extends LitElement implements LovelaceCard {
   public static async getConfigElement(): Promise<LovelaceCardEditor> {
-    await import(/* webpackChunkName: "hui-gauge-card-editor" */ "../editor/config-elements/hui-gauge-card-editor");
+    await import("../editor/config-elements/hui-gauge-card-editor");
     return document.createElement("hui-gauge-card-editor");
   }
-  public static getStubConfig(): object {
-    return {};
+
+  public static getStubConfig(
+    hass: HomeAssistant,
+    entities: string[],
+    entitiesFallback: string[]
+  ): GaugeCardConfig {
+    const includeDomains = ["counter", "input_number", "number", "sensor"];
+    const maxEntities = 1;
+    const entityFilter = (stateObj: HassEntity): boolean =>
+      !isNaN(Number(stateObj.state));
+
+    const foundEntities = findEntities(
+      hass,
+      maxEntities,
+      entities,
+      entitiesFallback,
+      includeDomains,
+      entityFilter
+    );
+
+    return { type: "gauge", entity: foundEntities[0] || "" };
   }
 
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _baseUnit = "50px";
-  @property() private _config?: GaugeCardConfig;
-
-  private _updated?: boolean;
+  @state() private _config?: GaugeCardConfig;
 
   public getCardSize(): number {
-    return 2;
+    return 4;
   }
 
   public setConfig(config: GaugeCardConfig): void {
-    if (!config || !config.entity) {
-      throw new Error("Invalid card configuration");
+    if (!config.entity) {
+      throw new Error("Entity must be specified");
     }
     if (!isValidEntityId(config.entity)) {
-      throw new Error("Invalid Entity");
+      throw new Error("Invalid entity");
     }
-    this._config = { min: 0, max: 100, theme: "default", ...config };
+
+    this._config = { min: DEFAULT_MIN, max: DEFAULT_MAX, ...config };
   }
 
-  public connectedCallback(): void {
-    super.connectedCallback();
-    this._setBaseUnit();
-  }
-
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
 
     const stateObj = this.hass.states[this._config.entity];
 
     if (!stateObj) {
       return html`
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
+      `;
+    }
+
+    const entityState = Number(stateObj.state);
+
+    if (stateObj.state === UNAVAILABLE) {
+      return html`
         <hui-warning
           >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
+            "ui.panel.lovelace.warning.entity_unavailable",
+            { entity: this._config.entity }
           )}</hui-warning
         >
       `;
     }
 
-    const state = Number(stateObj.state);
-
-    if (isNaN(state)) {
+    if (isNaN(entityState)) {
       return html`
         <hui-warning
           >${this.hass.localize(
             "ui.panel.lovelace.warning.entity_non_numeric",
-            "entity",
-            this._config.entity
+            { entity: this._config.entity }
           )}</hui-warning
         >
       `;
     }
 
+    const name = this._config.name ?? computeStateName(stateObj);
+
+    // Use `stateObj.state` as value to keep formatting (e.g trailing zeros)
+    // for consistent value display across gauge, entity, entity-row, etc.
     return html`
       <ha-card
-        @click="${this._handleClick}"
-        style=${styleMap({
-          "--base-unit": this._baseUnit,
+        class=${classMap({ action: hasAnyAction(this._config) })}
+        @action=${this._handleAction}
+        .actionHandler=${actionHandler({
+          hasHold: hasAction(this._config.hold_action),
+          hasDoubleClick: hasAction(this._config.double_tap_action),
         })}
+        tabindex=${ifDefined(
+          !this._config.tap_action || hasAction(this._config.tap_action)
+            ? "0"
+            : undefined
+        )}
       >
-        <div class="container">
-          <div class="gauge-a"></div>
-          <div class="gauge-b"></div>
-          <div
-            class="gauge-c"
-            style=${styleMap({
-              transform: `rotate(${this._translateTurn(state)}turn)`,
-              "background-color": this._computeSeverity(state),
-            })}
-          ></div>
-          <div class="gauge-data">
-            <div id="percent">
-              ${stateObj.state}
-              ${this._config.unit ||
-                stateObj.attributes.unit_of_measurement ||
-                ""}
-            </div>
-            <div id="name">
-              ${this._config.name || computeStateName(stateObj)}
-            </div>
-          </div>
-        </div>
+        <ha-gauge
+          .min=${this._config.min!}
+          .max=${this._config.max!}
+          .value=${stateObj.state}
+          .formatOptions=${getNumberFormatOptions(
+            stateObj,
+            this.hass.entities[stateObj.entity_id]
+          )}
+          .locale=${this.hass!.locale}
+          .label=${this._config!.unit ||
+          this.hass?.states[this._config!.entity].attributes
+            .unit_of_measurement ||
+          ""}
+          style=${styleMap({
+            "--gauge-color": this._computeSeverity(entityState),
+          })}
+          .needle=${this._config!.needle}
+          .levels=${this._config!.needle ? this._severityLevels() : undefined}
+        ></ha-gauge>
+        <div class="name" .title=${name}>${name}</div>
       </ha-card>
     `;
   }
 
   protected shouldUpdate(changedProps: PropertyValues): boolean {
     return hasConfigOrEntityChanged(this, changedProps);
-  }
-
-  protected firstUpdated(): void {
-    this._updated = true;
-    this._setBaseUnit();
-    this.classList.add("init");
   }
 
   protected updated(changedProps: PropertyValues): void {
@@ -149,23 +173,44 @@ class HuiGaugeCard extends LitElement implements LovelaceCard {
     }
 
     const oldHass = changedProps.get("hass") as HomeAssistant | undefined;
+    const oldConfig = changedProps.get("_config") as
+      | GaugeCardConfig
+      | undefined;
 
-    if (!oldHass || oldHass.themes !== this.hass.themes) {
+    if (
+      !oldHass ||
+      !oldConfig ||
+      oldHass.themes !== this.hass.themes ||
+      oldConfig.theme !== this._config.theme
+    ) {
       applyThemesOnElement(this, this.hass.themes, this._config.theme);
     }
   }
 
-  private _setBaseUnit(): void {
-    if (!this.isConnected || !this._updated) {
-      return;
+  private _computeSeverity(numberValue: number): string | undefined {
+    if (this._config!.needle) {
+      return undefined;
     }
-    const baseUnit = this._computeBaseUnit();
-    if (baseUnit !== "0px") {
-      this._baseUnit = baseUnit;
-    }
-  }
 
-  private _computeSeverity(numberValue: number): string {
+    // new format
+    let segments = this._config!.segments;
+    if (segments) {
+      segments = [...segments].sort((a, b) => a.from - b.from);
+
+      for (let i = 0; i < segments.length; i++) {
+        const segment = segments[i];
+        if (
+          segment &&
+          numberValue >= segment.from &&
+          (i + 1 === segments.length || numberValue < segments[i + 1]?.from)
+        ) {
+          return segment.color;
+        }
+      }
+      return severityMap.normal;
+    }
+
+    // old format
     const sections = this._config!.severity;
 
     if (!sections) {
@@ -197,98 +242,69 @@ class HuiGaugeCard extends LitElement implements LovelaceCard {
     return severityMap.normal;
   }
 
-  private _translateTurn(value: number): number {
-    const { min, max } = this._config!;
-    const maxTurnValue = Math.min(Math.max(value, min!), max!);
-    return (5 * (maxTurnValue - min!)) / (max! - min!) / 10;
+  private _severityLevels() {
+    // new format
+    const segments = this._config!.segments;
+    if (segments) {
+      return segments.map((segment) => ({
+        level: segment?.from,
+        stroke: segment?.color,
+        label: segment?.label,
+      }));
+    }
+
+    // old format
+    const sections = this._config!.severity;
+
+    if (!sections) {
+      return [{ level: 0, stroke: severityMap.normal }];
+    }
+
+    const sectionsArray = Object.keys(sections);
+    return sectionsArray.map((severity) => ({
+      level: sections[severity],
+      stroke: severityMap[severity],
+    }));
   }
 
-  private _computeBaseUnit(): string {
-    return this.clientWidth < 200 ? this.clientWidth / 5 + "px" : "50px";
+  private _handleAction(ev: ActionHandlerEvent) {
+    handleAction(this, this.hass!, this._config!, ev.detail.action!);
   }
 
-  private _handleClick(): void {
-    fireEvent(this, "hass-more-info", { entityId: this._config!.entity });
-  }
+  static styles = css`
+    ha-card {
+      height: 100%;
+      overflow: hidden;
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      box-sizing: border-box;
+    }
 
-  static get styles(): CSSResult {
-    return css`
-      ha-card {
-        height: calc(var(--base-unit) * 3);
-        position: relative;
-        cursor: pointer;
-      }
-      .container {
-        width: calc(var(--base-unit) * 4);
-        height: calc(var(--base-unit) * 2);
-        position: absolute;
-        top: calc(var(--base-unit) * 1.5);
-        left: 50%;
-        overflow: hidden;
-        text-align: center;
-        transform: translate(-50%, -50%);
-      }
-      .gauge-a {
-        z-index: 1;
-        position: absolute;
-        background-color: var(--primary-background-color);
-        width: calc(var(--base-unit) * 4);
-        height: calc(var(--base-unit) * 2);
-        top: 0%;
-        border-radius: calc(var(--base-unit) * 2.5) calc(var(--base-unit) * 2.5)
-          0px 0px;
-      }
-      .gauge-b {
-        z-index: 3;
-        position: absolute;
-        background-color: var(--paper-card-background-color);
-        width: calc(var(--base-unit) * 2.5);
-        height: calc(var(--base-unit) * 1.25);
-        top: calc(var(--base-unit) * 0.75);
-        margin-left: calc(var(--base-unit) * 0.75);
-        margin-right: auto;
-        border-radius: calc(var(--base-unit) * 2.5) calc(var(--base-unit) * 2.5)
-          0px 0px;
-      }
-      .gauge-c {
-        z-index: 2;
-        position: absolute;
-        background-color: var(--label-badge-blue);
-        width: calc(var(--base-unit) * 4);
-        height: calc(var(--base-unit) * 2);
-        top: calc(var(--base-unit) * 2);
-        margin-left: auto;
-        margin-right: auto;
-        border-radius: 0px 0px calc(var(--base-unit) * 2)
-          calc(var(--base-unit) * 2);
-        transform-origin: center top;
-      }
-      .init .gauge-c {
-        transition: all 1.3s ease-in-out;
-      }
-      .gauge-data {
-        z-index: 4;
-        color: var(--primary-text-color);
-        line-height: calc(var(--base-unit) * 0.3);
-        position: absolute;
-        width: calc(var(--base-unit) * 4);
-        height: calc(var(--base-unit) * 2.1);
-        top: calc(var(--base-unit) * 1.2);
-        margin-left: auto;
-        margin-right: auto;
-      }
-      .init .gauge-data {
-        transition: all 1s ease-out;
-      }
-      .gauge-data #percent {
-        font-size: calc(var(--base-unit) * 0.55);
-      }
-      .gauge-data #name {
-        padding-top: calc(var(--base-unit) * 0.15);
-        font-size: calc(var(--base-unit) * 0.3);
-      }
-    `;
-  }
+    ha-card.action {
+      cursor: pointer;
+    }
+
+    ha-card:focus {
+      outline: none;
+    }
+
+    ha-gauge {
+      width: 100%;
+      max-width: 250px;
+    }
+
+    .name {
+      text-align: center;
+      line-height: initial;
+      color: var(--primary-text-color);
+      width: 100%;
+      font-size: 15px;
+      margin-top: 8px;
+    }
+  `;
 }
 
 declare global {

@@ -1,13 +1,27 @@
-import applyThemesOnElement from "../common/dom/apply_themes_on_element";
-
-import { demoConfig } from "./demo_config";
-import { demoServices } from "./demo_services";
-import { demoPanels } from "./demo_panels";
-import { getEntity, Entity } from "./entity";
-import { HomeAssistant } from "../types";
-import { HassEntities } from "home-assistant-js-websocket";
-import { getLocalLanguage } from "../util/hass-translation";
+import type { HassEntities, HassEntity } from "home-assistant-js-websocket";
+import {
+  applyThemesOnElement,
+  invalidateThemeCache,
+} from "../common/dom/apply_themes_on_element";
+import { fireEvent } from "../common/dom/fire_event";
+import { computeFormatFunctions } from "../common/translations/entity-state";
+import { computeLocalize } from "../common/translations/localize";
+import { DEFAULT_PANEL } from "../data/panel";
+import {
+  DateFormat,
+  FirstWeekday,
+  NumberFormat,
+  TimeFormat,
+  TimeZone,
+} from "../data/translation";
 import { translationMetadata } from "../resources/translations-metadata";
+import type { HomeAssistant } from "../types";
+import { getLocalLanguage, getTranslation } from "../util/common-translation";
+import { demoConfig } from "./demo_config";
+import { demoPanels } from "./demo_panels";
+import { demoServices } from "./demo_services";
+import type { Entity } from "./entity";
+import { getEntity } from "./entity";
 
 const ensureArray = <T>(val: T | T[]): T[] =>
   Array.isArray(val) ? val : [val];
@@ -16,7 +30,7 @@ type MockRestCallback = (
   hass: MockHomeAssistant,
   method: string,
   path: string,
-  parameters: { [key: string]: any } | undefined
+  parameters: Record<string, any> | undefined
 ) => any;
 
 export interface MockHomeAssistant extends HomeAssistant {
@@ -24,10 +38,26 @@ export interface MockHomeAssistant extends HomeAssistant {
   updateHass(obj: Partial<MockHomeAssistant>);
   updateStates(newStates: HassEntities);
   addEntities(entites: Entity | Entity[], replace?: boolean);
-  mockWS(type: string, callback: (msg: any) => any);
+  updateTranslations(fragment: null | string, language?: string);
+  addTranslations(translations: Record<string, string>, language?: string);
+  mockWS(
+    type: string,
+    callback: (
+      msg: any,
+      hass: MockHomeAssistant,
+      onChange?: (response: any) => void
+    ) => any
+  );
   mockAPI(path: string | RegExp, callback: MockRestCallback);
   mockEvent(event);
-  mockTheme(theme: { [key: string]: string } | null);
+  mockTheme(theme: Record<string, string> | null);
+  formatEntityState(stateObj: HassEntity, state?: string): string;
+  formatEntityAttributeValue(
+    stateObj: HassEntity,
+    attribute: string,
+    value?: any
+  ): string;
+  formatEntityAttributeName(stateObj: HassEntity, attribute: string): string;
 }
 
 export const provideHass = (
@@ -39,11 +69,39 @@ export const provideHass = (
   const hass = (): MockHomeAssistant => elements[0].hass;
 
   const wsCommands = {};
-  const restResponses: Array<[string | RegExp, MockRestCallback]> = [];
-  const eventListeners: {
-    [event: string]: Array<(event) => void>;
-  } = {};
+  const restResponses: [string | RegExp, MockRestCallback][] = [];
+  const eventListeners: Record<string, ((event) => void)[]> = {};
   const entities = {};
+
+  async function updateTranslations(
+    fragment: null | string,
+    language?: string
+  ) {
+    const lang = language || getLocalLanguage();
+    const translation = await getTranslation(fragment, lang);
+    await addTranslations(translation.data, lang);
+    updateFormatFunctions();
+  }
+
+  async function addTranslations(
+    translations: Record<string, string>,
+    language?: string
+  ) {
+    const lang = language || getLocalLanguage();
+    const resources = {
+      [lang]: {
+        ...(hass().resources && hass().resources[lang]),
+        ...translations,
+      },
+    };
+    hass().updateHass({
+      resources,
+    });
+    hass().updateHass({
+      localize: await computeLocalize(elements[0], lang, hass().resources),
+    });
+    fireEvent(window, "translations-updated");
+  }
 
   function updateStates(newStates: HassEntities) {
     hass().updateHass({
@@ -51,7 +109,26 @@ export const provideHass = (
     });
   }
 
-  function addEntities(newEntities, replace: boolean = false) {
+  async function updateFormatFunctions() {
+    const {
+      formatEntityState,
+      formatEntityAttributeName,
+      formatEntityAttributeValue,
+    } = await computeFormatFunctions(
+      hass().localize,
+      hass().locale,
+      hass().config,
+      hass().entities,
+      [] // numericDeviceClasses
+    );
+    hass().updateHass({
+      formatEntityState,
+      formatEntityAttributeName,
+      formatEntityAttributeValue,
+    });
+  }
+
+  function addEntities(newEntities, replace = false) {
     const states = {};
     ensureArray(newEntities).forEach((ent) => {
       ent.hass = hass();
@@ -65,18 +142,14 @@ export const provideHass = (
     } else {
       updateStates(states);
     }
+    updateFormatFunctions();
   }
 
   function mockAPI(path, callback) {
     restResponses.push([path, callback]);
   }
 
-  mockAPI(new RegExp("states/.+"), (
-    // @ts-ignore
-    method,
-    path,
-    parameters
-  ) => {
+  mockAPI(/states\/.+/, (_method, path, parameters) => {
     const [domain, objectId] = path.substr(7).split(".", 2);
     if (!domain || !objectId) {
       return;
@@ -87,32 +160,44 @@ export const provideHass = (
   });
 
   const localLanguage = getLocalLanguage();
+  const noop = () => undefined;
 
   const hassObj: MockHomeAssistant = {
     // Home Assistant properties
-    auth: {} as any,
+    auth: {
+      data: {
+        hassUrl: "",
+      },
+    } as any,
     connection: {
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
+      addEventListener: noop,
+      removeEventListener: noop,
       sendMessage: (msg) => {
         const callback = wsCommands[msg.type];
 
         if (callback) {
-          callback(msg);
+          callback(msg, hass());
         } else {
-          // tslint:disable-next-line
+          // eslint-disable-next-line
           console.error(`Unknown WS command: ${msg.type}`);
         }
       },
-      sendMessagePromise: (msg) => {
+      sendMessagePromise: async (msg) => {
         const callback = wsCommands[msg.type];
         return callback
-          ? callback(msg)
+          ? callback(msg, hass())
           : Promise.reject({
               code: "command_not_mocked",
-              message: `WS Command ${
-                msg.type
-              } is not implemented in provide_hass.`,
+              message: `WS Command ${msg.type} is not implemented in provide_hass.`,
+            });
+      },
+      subscribeMessage: async (onChange, msg) => {
+        const callback = wsCommands[msg.type];
+        return callback
+          ? callback(msg, hass(), onChange)
+          : Promise.reject({
+              code: "command_not_mocked",
+              message: `WS Command ${msg.type} is not implemented in provide_hass.`,
             });
       },
       subscribeEvents: async (
@@ -130,16 +215,23 @@ export const provideHass = (
           );
         };
       },
+      suspendReconnectUntil: noop,
+      suspend: noop,
+      ping: noop,
       socket: {
         readyState: WebSocket.OPEN,
       },
+      haVersion: "DEMO",
     } as any,
     connected: true,
     states: {},
     config: demoConfig,
     themes: {
       default_theme: "default",
+      default_dark_theme: null,
       themes: {},
+      darkMode: false,
+      theme: "default",
     },
     panels: demoPanels,
     services: demoServices,
@@ -152,24 +244,41 @@ export const provideHass = (
       name: "Demo User",
     },
     panelUrl: "lovelace",
-
+    defaultPanel: DEFAULT_PANEL,
     language: localLanguage,
     selectedLanguage: localLanguage,
+    locale: {
+      language: localLanguage,
+      number_format: NumberFormat.language,
+      time_format: TimeFormat.language,
+      date_format: DateFormat.language,
+      time_zone: TimeZone.local,
+      first_weekday: FirstWeekday.language,
+    },
     resources: null as any,
     localize: () => "",
 
     translationMetadata: translationMetadata as any,
+    async loadBackendTranslation() {
+      return hass().localize;
+    },
     dockedSidebar: "auto",
+    vibrate: true,
+    debugConnection: false,
+    suspendWhenHidden: false,
     moreInfoEntityId: null as any,
+    // @ts-ignore
     async callService(domain, service, data) {
       if (data && "entity_id" in data) {
+        // eslint-disable-next-line
+        console.log("Entity service call", domain, service, data);
         await Promise.all(
           ensureArray(data.entity_id).map((ent) =>
             entities[ent].handleService(domain, service, data)
           )
         );
       } else {
-        // tslint:disable-next-line
+        // eslint-disable-next-line
         console.log("unmocked callService", domain, service, data);
       }
     },
@@ -182,6 +291,7 @@ export const provideHass = (
         ? response[1](hass(), method, path, parameters)
         : Promise.reject(`API Mock for ${path} is not implemented`);
     },
+    hassUrl: (path?) => path,
     fetchWithAuth: () => Promise.reject("Not implemented"),
     sendWS: (msg) => hassObj.connection.sendMessage(msg),
     callWS: (msg) => hassObj.connection.sendMessagePromise(msg),
@@ -195,6 +305,12 @@ export const provideHass = (
       });
     },
     updateStates,
+    updateTranslations,
+    addTranslations,
+    loadFragmentTranslation: async (fragment: string) => {
+      await updateTranslations(fragment);
+      return hass().localize;
+    },
     addEntities,
     mockWS(type, callback) {
       wsCommands[type] = callback;
@@ -204,8 +320,9 @@ export const provideHass = (
       (eventListeners[event] || []).forEach((fn) => fn(event));
     },
     mockTheme(theme) {
+      invalidateThemeCache();
       hass().updateHass({
-        selectedTheme: theme ? "mock" : "default",
+        selectedTheme: { theme: theme ? "mock" : "default" },
         themes: {
           ...hass().themes,
           themes: {
@@ -217,11 +334,19 @@ export const provideHass = (
       applyThemesOnElement(
         document.documentElement,
         themes,
-        selectedTheme,
+        selectedTheme!.theme,
+        undefined,
         true
       );
     },
-
+    areas: {},
+    devices: {},
+    entities: {},
+    formatEntityState: (stateObj, state) =>
+      (state !== null ? state : stateObj.state) ?? "",
+    formatEntityAttributeName: (_stateObj, attribute) => attribute,
+    formatEntityAttributeValue: (stateObj, attribute, value) =>
+      value !== null ? value : (stateObj.attributes[attribute] ?? ""),
     ...overrideData,
   };
 

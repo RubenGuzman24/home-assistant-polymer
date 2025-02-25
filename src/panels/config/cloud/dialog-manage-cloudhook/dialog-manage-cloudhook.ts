@@ -1,143 +1,150 @@
-import {
-  html,
-  LitElement,
-  PropertyDeclarations,
-  css,
-  CSSResult,
-} from "lit-element";
-
 import "@material/mwc-button";
-import "@polymer/paper-input/paper-input";
-import "@polymer/paper-dialog-scrollable/paper-dialog-scrollable";
-import "../../../../components/dialog/ha-paper-dialog";
-// This is not a duplicate import, one is for types, one is for element.
-// tslint:disable-next-line
-import { HaPaperDialog } from "../../../../components/dialog/ha-paper-dialog";
-// tslint:disable-next-line
-import { PaperInputElement } from "@polymer/paper-input/paper-input";
+import { mdiOpenInNew } from "@mdi/js";
+import type { CSSResultGroup } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { state } from "lit/decorators";
+import { fireEvent } from "../../../../common/dom/fire_event";
+import { createCloseHeading } from "../../../../components/ha-dialog";
+import { showConfirmationDialog } from "../../../../dialogs/generic/show-dialog-box";
+import { haStyle, haStyleDialog } from "../../../../resources/styles";
+import type { HomeAssistant } from "../../../../types";
+import { documentationUrl } from "../../../../util/documentation-url";
+import type { WebhookDialogParams } from "./show-dialog-manage-cloudhook";
 
-import { HomeAssistant } from "../../../../types";
-import { haStyle } from "../../../../resources/styles";
-import { WebhookDialogParams } from "./show-dialog-manage-cloudhook";
-
-const inputLabel = "Public URL – Click to copy to clipboard";
+import "../../../../components/ha-copy-textfield";
 
 export class DialogManageCloudhook extends LitElement {
   protected hass?: HomeAssistant;
-  private _params?: WebhookDialogParams;
 
-  static get properties(): PropertyDeclarations {
-    return {
-      _params: {},
-    };
+  @state() private _params?: WebhookDialogParams;
+
+  public showDialog(params: WebhookDialogParams) {
+    this._params = params;
   }
 
-  public async showDialog(params: WebhookDialogParams) {
-    this._params = params;
-    // Wait till dialog is rendered.
-    await this.updateComplete;
-    this._dialog.open();
+  public closeDialog() {
+    this._params = undefined;
+    fireEvent(this, "dialog-closed", { dialog: this.localName });
   }
 
   protected render() {
     if (!this._params) {
-      return html``;
+      return nothing;
     }
     const { webhook, cloudhook } = this._params;
     const docsUrl =
       webhook.domain === "automation"
-        ? "https://www.home-assistant.io/docs/automation/trigger/#webhook-trigger"
-        : `https://www.home-assistant.io/components/${webhook.domain}/`;
+        ? documentationUrl(
+            this.hass!,
+            "/docs/automation/trigger/#webhook-trigger"
+          )
+        : documentationUrl(this.hass!, `/integrations/${webhook.domain}/`);
     return html`
-      <ha-paper-dialog with-backdrop>
-        <h2>Webhook for ${webhook.name}</h2>
+      <ha-dialog
+        open
+        hideActions
+        @closed=${this.closeDialog}
+        .heading=${createCloseHeading(
+          this.hass!,
+          this.hass!.localize(
+            "ui.panel.config.cloud.dialog_cloudhook.webhook_for",
+            { name: webhook.name }
+          )
+        )}
+      >
         <div>
-          <p>The webhook is available at the following url:</p>
-          <paper-input
-            label="${inputLabel}"
-            value="${cloudhook.cloudhook_url}"
-            @click="${this._copyClipboard}"
-            @blur="${this._restoreLabel}"
-          ></paper-input>
           <p>
-            ${cloudhook.managed
+            ${!cloudhook.managed
               ? html`
-                  This webhook is managed by an integration and cannot be
-                  disabled.
+                  ${this.hass!.localize(
+                    "ui.panel.config.cloud.dialog_cloudhook.managed_by_integration"
+                  )}
                 `
               : html`
-                  If you no longer want to use this webhook, you can
-                  <button class="link" @click="${this._disableWebhook}">
-                    disable it</button
+                  ${this.hass!.localize(
+                    "ui.panel.config.cloud.dialog_cloudhook.info_disable_webhook"
+                  )}
+                  <button class="link" @click=${this._disableWebhook}>
+                    ${this.hass!.localize(
+                      "ui.panel.config.cloud.dialog_cloudhook.link_disable_webhook"
+                    )}</button
                   >.
                 `}
+            <br />
+            <a href=${docsUrl} target="_blank" rel="noreferrer">
+              ${this.hass!.localize(
+                "ui.panel.config.cloud.dialog_cloudhook.view_documentation"
+              )}
+              <ha-svg-icon .path=${mdiOpenInNew}></ha-svg-icon>
+            </a>
           </p>
+
+          <ha-copy-textfield
+            .hass=${this.hass}
+            .value=${cloudhook.cloudhook_url}
+            .label=${this.hass!.localize("ui.panel.config.common.copy_link")}
+          ></ha-copy-textfield>
         </div>
 
-        <div class="paper-dialog-buttons">
-          <a href="${docsUrl}" target="_blank">
-            <mwc-button>VIEW DOCUMENTATION</mwc-button>
-          </a>
-          <mwc-button @click="${this._closeDialog}">CLOSE</mwc-button>
-        </div>
-      </ha-paper-dialog>
+        <a
+          href=${docsUrl}
+          target="_blank"
+          rel="noreferrer"
+          slot="secondaryAction"
+        >
+          <mwc-button>
+            ${this.hass!.localize(
+              "ui.panel.config.cloud.dialog_cloudhook.view_documentation"
+            )}
+          </mwc-button>
+        </a>
+        <mwc-button @click=${this.closeDialog} slot="primaryAction">
+          ${this.hass!.localize("ui.panel.config.cloud.dialog_cloudhook.close")}
+        </mwc-button>
+      </ha-dialog>
     `;
   }
 
-  private get _dialog(): HaPaperDialog {
-    return this.shadowRoot!.querySelector("ha-paper-dialog")!;
-  }
-
-  private get _paperInput(): PaperInputElement {
-    return this.shadowRoot!.querySelector("paper-input")!;
-  }
-
-  private _closeDialog() {
-    this._dialog.close();
-  }
-
   private async _disableWebhook() {
-    if (!confirm("Are you sure you want to disable this webhook?")) {
-      return;
-    }
-
-    this._params!.disableHook();
-    this._closeDialog();
-  }
-
-  private _copyClipboard(ev: FocusEvent) {
-    // paper-input -> iron-input -> input
-    const paperInput = ev.currentTarget as PaperInputElement;
-    const input = (paperInput.inputElement as any)
-      .inputElement as HTMLInputElement;
-    input.setSelectionRange(0, input.value.length);
-    try {
-      document.execCommand("copy");
-      paperInput.label = "COPIED TO CLIPBOARD";
-    } catch (err) {
-      // Copying failed. Oh no
+    const confirmed = await showConfirmationDialog(this, {
+      title: this.hass!.localize(
+        "ui.panel.config.cloud.dialog_cloudhook.confirm_disable_title"
+      ),
+      text: this.hass!.localize(
+        "ui.panel.config.cloud.dialog_cloudhook.confirm_disable_text",
+        { name: this._params!.webhook.name }
+      ),
+      dismissText: this.hass!.localize("ui.common.cancel"),
+      confirmText: this.hass!.localize("ui.common.disable"),
+      destructive: true,
+    });
+    if (confirmed) {
+      this._params!.disableHook();
+      this.closeDialog();
     }
   }
 
-  private _restoreLabel() {
-    this._paperInput.label = inputLabel;
-  }
-
-  static get styles(): CSSResult[] {
+  static get styles(): CSSResultGroup {
     return [
       haStyle,
+      haStyleDialog,
       css`
-        ha-paper-dialog {
+        ha-dialog {
           width: 650px;
-        }
-        paper-input {
-          margin-top: -8px;
         }
         button.link {
           color: var(--primary-color);
-        }
-        .paper-dialog-buttons a {
           text-decoration: none;
+        }
+        a {
+          text-decoration: none;
+        }
+        a ha-svg-icon {
+          --mdc-icon-size: 16px;
+        }
+        p {
+          margin-top: 0;
+          margin-bottom: 16px;
         }
       `,
     ];

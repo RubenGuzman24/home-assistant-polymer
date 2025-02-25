@@ -1,66 +1,129 @@
-import {
-  html,
-  LitElement,
-  PropertyValues,
-  TemplateResult,
-  CSSResult,
-  css,
-  property,
-  customElement,
-} from "lit-element";
-import { classMap } from "lit-html/directives/class-map";
-
+import type { HassEntity, UnsubscribeFunc } from "home-assistant-js-websocket";
+import type { PropertyValues } from "lit";
+import { LitElement, css, html, nothing } from "lit";
+import { customElement, property, query, state } from "lit/decorators";
+import { classMap } from "lit/directives/class-map";
+import { styleMap } from "lit/directives/style-map";
+import { applyThemesOnElement } from "../../../common/dom/apply_themes_on_element";
+import { fireEvent } from "../../../common/dom/fire_event";
+import { stateColorCss } from "../../../common/entity/state_color";
+import { supportsFeature } from "../../../common/entity/supports-feature";
+import "../../../components/chips/ha-assist-chip";
 import "../../../components/ha-card";
-import "../../../components/ha-label-badge";
-import "../components/hui-warning";
-
-import { LovelaceCard } from "../types";
-import { HomeAssistant } from "../../../types";
+import "../../../components/ha-state-icon";
+import "../../../components/ha-textfield";
+import type { HaTextField } from "../../../components/ha-textfield";
+import type { AlarmMode } from "../../../data/alarm_control_panel";
 import {
-  callAlarmAction,
+  ALARM_MODES,
   FORMAT_NUMBER,
+  callAlarmAction,
 } from "../../../data/alarm_control_panel";
-import { AlarmPanelCardConfig } from "./types";
-
-const ICONS = {
-  armed_away: "hass:shield-lock",
-  armed_custom_bypass: "hass:security",
-  armed_home: "hass:shield-home",
-  armed_night: "hass:shield-home",
-  disarmed: "hass:shield-check",
-  pending: "hass:shield-outline",
-  triggered: "hass:bell-ring",
-};
+import { UNAVAILABLE } from "../../../data/entity";
+import type { HomeAssistant } from "../../../types";
+import { findEntities } from "../common/find-entities";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { LovelaceCard } from "../types";
+import type { ExtEntityRegistryEntry } from "../../../data/entity_registry";
+import {
+  getExtendedEntityRegistryEntry,
+  subscribeEntityRegistry,
+} from "../../../data/entity_registry";
+import type { AlarmPanelCardConfig, AlarmPanelCardConfigState } from "./types";
 
 const BUTTONS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "clear"];
+
+export const DEFAULT_STATES = [
+  "arm_home",
+  "arm_away",
+] as AlarmPanelCardConfigState[];
+
+export const ALARM_MODE_STATE_MAP: Record<
+  AlarmPanelCardConfigState,
+  AlarmMode
+> = {
+  arm_home: "armed_home",
+  arm_away: "armed_away",
+  arm_night: "armed_night",
+  arm_vacation: "armed_vacation",
+  arm_custom_bypass: "armed_custom_bypass",
+};
+
+export const filterSupportedAlarmStates = (
+  stateObj: HassEntity | undefined,
+  states: AlarmPanelCardConfigState[]
+): AlarmPanelCardConfigState[] =>
+  states.filter(
+    (s) =>
+      stateObj &&
+      supportsFeature(
+        stateObj,
+        ALARM_MODES[ALARM_MODE_STATE_MAP[s]].feature || 0
+      )
+  );
 
 @customElement("hui-alarm-panel-card")
 class HuiAlarmPanelCard extends LitElement implements LovelaceCard {
   public static async getConfigElement() {
-    await import(/* webpackChunkName: "hui-alarm-panel-card-editor" */ "../editor/config-elements/hui-alarm-panel-card-editor");
+    await import("../editor/config-elements/hui-alarm-panel-card-editor");
     return document.createElement("hui-alarm-panel-card-editor");
   }
 
-  public static getStubConfig() {
-    return { states: ["arm_home", "arm_away"] };
+  public static getStubConfig(
+    hass: HomeAssistant,
+    entities: string[],
+    entitiesFallback: string[]
+  ): AlarmPanelCardConfig {
+    const includeDomains = ["alarm_control_panel"];
+    const maxEntities = 1;
+    const foundEntities = findEntities(
+      hass,
+      maxEntities,
+      entities,
+      entitiesFallback,
+      includeDomains
+    );
+
+    const entity = foundEntities[0] || "";
+    const stateObj = hass.states[entity];
+
+    return {
+      type: "alarm-panel",
+      states: filterSupportedAlarmStates(stateObj, DEFAULT_STATES),
+      entity,
+    };
   }
 
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: AlarmPanelCardConfig;
+  @state() private _config?: AlarmPanelCardConfig;
 
-  @property() private _code?: string;
+  @state() private _entry?: ExtEntityRegistryEntry | null;
 
-  public getCardSize(): number {
+  @query("#alarmCode") private _input?: HaTextField;
+
+  private _unsubEntityRegistry?: UnsubscribeFunc;
+
+  public connectedCallback() {
+    super.connectedCallback();
+    this._subscribeEntityEntry();
+  }
+
+  public disconnectedCallback() {
+    super.disconnectedCallback();
+    this._unsubscribeEntityRegistry();
+  }
+
+  public async getCardSize(): Promise<number> {
     if (!this._config || !this.hass) {
-      return 0;
+      return 9;
     }
 
     const stateObj = this.hass.states[this._config.entity];
 
     return !stateObj || stateObj.attributes.code_format !== FORMAT_NUMBER
-      ? 3
-      : 8;
+      ? 4
+      : 9;
   }
 
   public setConfig(config: AlarmPanelCardConfig): void {
@@ -69,244 +132,317 @@ class HuiAlarmPanelCard extends LitElement implements LovelaceCard {
       !config.entity ||
       config.entity.split(".")[0] !== "alarm_control_panel"
     ) {
-      throw new Error("Invalid card configuration");
+      throw new Error("Invalid configuration");
     }
 
-    const defaults = {
-      states: ["arm_away", "arm_home"],
-    };
+    this._config = { ...config };
+    this._subscribeEntityEntry();
+  }
 
-    this._config = { ...defaults, ...config };
-    this._code = "";
+  protected updated(changedProps: PropertyValues): void {
+    super.updated(changedProps);
+    if (!this._config || !this.hass) {
+      return;
+    }
+    const oldHass = changedProps.get("hass") as HomeAssistant | undefined;
+    const oldConfig = changedProps.get("_config") as
+      | AlarmPanelCardConfig
+      | undefined;
+
+    if (
+      !oldHass ||
+      !oldConfig ||
+      oldHass.themes !== this.hass.themes ||
+      oldConfig.theme !== this._config.theme
+    ) {
+      applyThemesOnElement(this, this.hass.themes, this._config.theme);
+    }
   }
 
   protected shouldUpdate(changedProps: PropertyValues): boolean {
-    if (changedProps.has("_config") || changedProps.has("_code")) {
+    if (changedProps.has("_config")) {
       return true;
     }
 
     const oldHass = changedProps.get("hass") as HomeAssistant | undefined;
-    if (oldHass) {
-      return (
-        oldHass.states[this._config!.entity] !==
-        this.hass!.states[this._config!.entity]
-      );
+
+    if (
+      !oldHass ||
+      oldHass.themes !== this.hass!.themes ||
+      oldHass.locale !== this.hass!.locale
+    ) {
+      return true;
     }
-    return true;
+    return (
+      oldHass.states[this._config!.entity] !==
+      this.hass!.states[this._config!.entity]
+    );
   }
 
-  protected render(): TemplateResult | void {
+  private async _unsubscribeEntityRegistry() {
+    if (this._unsubEntityRegistry) {
+      this._unsubEntityRegistry();
+      this._unsubEntityRegistry = undefined;
+    }
+  }
+
+  private async _subscribeEntityEntry() {
+    if (!this._config?.entity) {
+      return;
+    }
+    try {
+      this._unsubEntityRegistry = subscribeEntityRegistry(
+        this.hass!.connection,
+        async (entries) => {
+          if (
+            entries.some((entry) => entry.entity_id === this._config!.entity)
+          ) {
+            this._entry = await getExtendedEntityRegistryEntry(
+              this.hass!,
+              this._config!.entity
+            );
+          }
+        }
+      );
+    } catch (_e) {
+      this._entry = null;
+    }
+  }
+
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
     const stateObj = this.hass.states[this._config.entity];
+    const states =
+      this._config.states ||
+      filterSupportedAlarmStates(stateObj, DEFAULT_STATES);
 
     if (!stateObj) {
       return html`
-        <hui-warning
-          >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
-          )}</hui-warning
-        >
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
       `;
     }
 
+    const stateLabel = this._stateDisplay(stateObj.state);
+
+    const defaultCode = this._entry?.options?.alarm_control_panel?.default_code;
+
     return html`
-      <ha-card .header="${this._config.name || this._label(stateObj.state)}">
-        <ha-label-badge
-          class="${classMap({ [stateObj.state]: true })}"
-          .icon="${ICONS[stateObj.state] || "hass:shield-outline"}"
-          .label="${this._stateIconLabel(stateObj.state)}"
-        ></ha-label-badge>
+      <ha-card>
+        <h1 class="card-header">
+          ${this._config.name ||
+          stateObj.attributes.friendly_name ||
+          stateLabel}
+          <ha-assist-chip
+            filled
+            style=${styleMap({
+              "--alarm-state-color": stateColorCss(stateObj),
+            })}
+            class=${classMap({ [stateObj.state]: true })}
+            @click=${this._handleMoreInfo}
+            .label=${stateLabel}
+          >
+            <ha-state-icon
+              slot="icon"
+              .hass=${this.hass}
+              .stateObj=${stateObj}
+            ></ha-state-icon>
+          </ha-assist-chip>
+        </h1>
         <div id="armActions" class="actions">
           ${(stateObj.state === "disarmed"
-            ? this._config.states!
-            : ["disarm"]
-          ).map((state) => {
-            return html`
+            ? states
+            : (["disarm"] as const)
+          ).map(
+            (stateAction) => html`
               <mwc-button
-                .action="${state}"
-                @click="${this._handleActionClick}"
+                .action=${stateAction}
+                @click=${this._handleActionClick}
                 outlined
               >
-                ${this._label(state)}
+                ${this._actionDisplay(stateAction)}
               </mwc-button>
-            `;
-          })}
+            `
+          )}
         </div>
-        ${!stateObj.attributes.code_format
-          ? html``
+        ${!stateObj.attributes.code_format || defaultCode
+          ? nothing
           : html`
-              <paper-input
-                label="Alarm Code"
+              <ha-textfield
+                id="alarmCode"
+                .label=${this.hass.localize("ui.card.alarm_control_panel.code")}
                 type="password"
-                .value="${this._code}"
-              ></paper-input>
+                .inputMode=${stateObj.attributes.code_format === FORMAT_NUMBER
+                  ? "numeric"
+                  : "text"}
+              ></ha-textfield>
             `}
-        ${stateObj.attributes.code_format !== FORMAT_NUMBER
-          ? html``
+        ${stateObj.attributes.code_format !== FORMAT_NUMBER || defaultCode
+          ? nothing
           : html`
               <div id="keypad">
-                ${BUTTONS.map((value) => {
-                  return value === ""
-                    ? html`
-                        <mwc-button disabled></mwc-button>
-                      `
+                ${BUTTONS.map((value) =>
+                  value === ""
+                    ? html` <mwc-button disabled></mwc-button> `
                     : html`
                         <mwc-button
-                          .value="${value}"
-                          @click="${this._handlePadClick}"
-                          dense
+                          .value=${value}
+                          @click=${this._handlePadClick}
+                          outlined
+                          class=${classMap({
+                            numberkey: value !== "clear",
+                          })}
                         >
                           ${value === "clear"
-                            ? this._label("clear_code")
+                            ? this.hass!.localize(
+                                `ui.card.alarm_control_panel.clear_code`
+                              )
                             : value}
                         </mwc-button>
-                      `;
-                })}
+                      `
+                )}
               </div>
             `}
       </ha-card>
     `;
   }
 
-  private _stateIconLabel(state: string): string {
-    const stateLabel = state.split("_").pop();
-    return stateLabel === "disarmed" ||
-      stateLabel === "triggered" ||
-      !stateLabel
-      ? ""
-      : stateLabel;
+  private _actionDisplay(
+    entityState: NonNullable<AlarmPanelCardConfig["states"]>[number]
+  ): string {
+    return this.hass!.localize(`ui.card.alarm_control_panel.${entityState}`);
   }
 
-  private _label(state: string): string {
-    return (
-      this.hass!.localize(`state.alarm_control_panel.${state}`) ||
-      this.hass!.localize(`ui.card.alarm_control_panel.${state}`)
-    );
+  private _stateDisplay(entityState: string): string {
+    return entityState === UNAVAILABLE
+      ? this.hass!.localize("state.default.unavailable")
+      : this.hass!.localize(
+          `component.alarm_control_panel.entity_component._.state.${entityState}`
+        ) || entityState;
   }
 
   private _handlePadClick(e: MouseEvent): void {
     const val = (e.currentTarget! as any).value;
-    this._code = val === "clear" ? "" : this._code + val;
+    this._input!.value = val === "clear" ? "" : this._input!.value + val;
   }
 
   private _handleActionClick(e: MouseEvent): void {
+    const input = this._input;
     callAlarmAction(
       this.hass!,
       this._config!.entity,
       (e.currentTarget! as any).action,
-      this._code!
+      input?.value || undefined
     );
-    this._code = "";
+    if (input) {
+      input.value = "";
+    }
   }
 
-  static get styles(): CSSResult {
-    return css`
-      ha-card {
-        padding-bottom: 16px;
-        position: relative;
-        --alarm-color-disarmed: var(--label-badge-green);
-        --alarm-color-pending: var(--label-badge-yellow);
-        --alarm-color-triggered: var(--label-badge-red);
-        --alarm-color-armed: var(--label-badge-red);
-        --alarm-color-autoarm: rgba(0, 153, 255, 0.1);
-        --alarm-state-color: var(--alarm-color-armed);
-        --base-unit: 15px;
-        font-size: calc(var(--base-unit));
-      }
-
-      ha-label-badge {
-        --ha-label-badge-color: var(--alarm-state-color);
-        --label-badge-text-color: var(--alarm-state-color);
-        --label-badge-background-color: var(--paper-card-background-color);
-        color: var(--alarm-state-color);
-        position: absolute;
-        right: 12px;
-        top: 12px;
-      }
-
-      .disarmed {
-        --alarm-state-color: var(--alarm-color-disarmed);
-      }
-
-      .triggered {
-        --alarm-state-color: var(--alarm-color-triggered);
-        animation: pulse 1s infinite;
-      }
-
-      .arming {
-        --alarm-state-color: var(--alarm-color-pending);
-        animation: pulse 1s infinite;
-      }
-
-      .pending {
-        --alarm-state-color: var(--alarm-color-pending);
-        animation: pulse 1s infinite;
-      }
-
-      @keyframes pulse {
-        0% {
-          --ha-label-badge-color: var(--alarm-state-color);
-        }
-        100% {
-          --ha-label-badge-color: rgba(255, 153, 0, 0.3);
-        }
-      }
-
-      paper-input {
-        margin: 0 auto 8px;
-        max-width: 150px;
-        font-size: calc(var(--base-unit));
-        text-align: center;
-      }
-
-      .state {
-        margin-left: 16px;
-        font-size: calc(var(--base-unit) * 0.9);
-        position: relative;
-        bottom: 16px;
-        color: var(--alarm-state-color);
-        animation: none;
-      }
-
-      #keypad {
-        display: flex;
-        justify-content: center;
-        flex-wrap: wrap;
-        margin: auto;
-        width: 300px;
-      }
-
-      #keypad mwc-button {
-        margin-bottom: 5%;
-        width: 30%;
-        padding: calc(var(--base-unit));
-        font-size: calc(var(--base-unit) * 1.1);
-        box-sizing: border-box;
-      }
-
-      .actions {
-        margin: 0 8px;
-        padding-top: 20px;
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        font-size: calc(var(--base-unit) * 1);
-      }
-
-      .actions mwc-button {
-        min-width: calc(var(--base-unit) * 9);
-        margin: 0 4px 4px;
-      }
-
-      mwc-button#disarm {
-        color: var(--google-red-500);
-      }
-    `;
+  private _handleMoreInfo() {
+    fireEvent(this, "hass-more-info", {
+      entityId: this._config!.entity,
+    });
   }
+
+  static styles = css`
+    ha-card {
+      padding-bottom: 16px;
+      position: relative;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-sizing: border-box;
+      --alarm-state-color: var(--state-inactive-color);
+    }
+
+    ha-assist-chip {
+      --ha-assist-chip-filled-container-color: var(--alarm-state-color);
+      --primary-text-color: var(--text-primary-color);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .triggered,
+    .arming,
+    .pending {
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0;
+      }
+      100% {
+        opacity: 1;
+      }
+    }
+
+    ha-textfield {
+      display: block;
+      margin: 8px;
+      max-width: 150px;
+      text-align: center;
+    }
+
+    .state {
+      margin-left: 16px;
+      margin-inline-start: 16px;
+      margin-inline-end: initial;
+      position: relative;
+      bottom: 16px;
+      color: var(--alarm-state-color);
+      animation: none;
+    }
+
+    #keypad {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin: auto;
+      width: 100%;
+      max-width: 300px;
+      direction: ltr;
+    }
+
+    #keypad mwc-button {
+      padding: 8px;
+      width: 30%;
+      box-sizing: border-box;
+    }
+
+    .actions {
+      margin: 0;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .actions mwc-button {
+      margin: 0 4px 4px;
+    }
+
+    mwc-button#disarm {
+      color: var(--error-color);
+    }
+
+    mwc-button.numberkey {
+      --mdc-typography-button-font-size: var(--keypad-font-size, 0.875rem);
+    }
+  `;
 }
 
 declare global {

@@ -1,30 +1,23 @@
-import {
-  html,
-  LitElement,
-  PropertyValues,
-  TemplateResult,
-  customElement,
-  property,
-  css,
-  CSSResult,
-} from "lit-element";
-import { PaperToggleButtonElement } from "@polymer/paper-toggle-button/paper-toggle-button";
-
+import type { PropertyValues } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
 import { DOMAINS_TOGGLE } from "../../../common/const";
-import { turnOnOffEntities } from "../common/entity/turn-on-off-entities";
-import { HomeAssistant } from "../../../types";
+import "../../../components/ha-switch";
+import type { HaSwitch } from "../../../components/ha-switch";
 import { forwardHaptic } from "../../../data/haptics";
+import type { HomeAssistant } from "../../../types";
+import { turnOnOffEntities } from "../common/entity/turn-on-off-entities";
 
 @customElement("hui-entities-toggle")
 class HuiEntitiesToggle extends LitElement {
-  @property() public entities?: string[];
+  @property({ type: Array }) public entities?: string[];
 
-  @property() protected hass?: HomeAssistant;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _toggleEntities?: string[];
+  @state() private _toggleEntities?: string[];
 
-  public updated(changedProperties: PropertyValues): void {
-    super.updated(changedProperties);
+  public willUpdate(changedProperties: PropertyValues): void {
+    super.willUpdate(changedProperties);
     if (changedProperties.has("entities")) {
       this._toggleEntities = this.entities!.filter(
         (entityId) =>
@@ -34,41 +27,39 @@ class HuiEntitiesToggle extends LitElement {
     }
   }
 
-  protected render(): TemplateResult | void {
-    if (!this._toggleEntities) {
-      return html``;
+  protected render() {
+    if (!this._toggleEntities?.length) {
+      return nothing;
     }
 
     return html`
-      <paper-toggle-button
-        aria-label="Toggle entities."
-        ?checked="${this._toggleEntities!.some((entityId) => {
+      <ha-switch
+        aria-label=${this.hass!.localize(
+          "ui.panel.lovelace.card.entities.toggle"
+        )}
+        .checked=${this._toggleEntities!.some((entityId) => {
           const stateObj = this.hass!.states[entityId];
           return stateObj && stateObj.state === "on";
-        })}"
-        @change="${this._callService}"
-      ></paper-toggle-button>
+        })}
+        @change=${this._callService}
+      ></ha-switch>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        width: 38px;
-        display: block;
-      }
-      paper-toggle-button {
-        cursor: pointer;
-        --paper-toggle-button-label-spacing: 0;
-        padding: 13px 5px;
-        margin: -4px -5px;
-      }
-    `;
-  }
+  static styles = css`
+    :host {
+      width: 38px;
+      display: block;
+    }
+    ha-switch {
+      padding: 13px 5px;
+      margin: -4px -8px;
+    }
+  `;
 
   private _callService(ev: MouseEvent): void {
     forwardHaptic("light");
-    const turnOn = (ev.target as PaperToggleButtonElement).checked;
+    const turnOn = (ev.target as HaSwitch).checked;
     turnOnOffEntities(this.hass!, this._toggleEntities!, turnOn!);
   }
 }

@@ -1,31 +1,47 @@
-import {
-  LitElement,
-  TemplateResult,
-  html,
-  css,
-  customElement,
-  CSSResult,
-} from "lit-element";
-import "@polymer/paper-spinner/paper-spinner-lite";
+import type { TemplateResult } from "lit";
+import { css, html, LitElement } from "lit";
+import { customElement, property } from "lit/decorators";
+import "../../components/ha-circular-progress";
+import type { DataEntryFlowStep } from "../../data/data_entry_flow";
+import type { HomeAssistant } from "../../types";
+import type { FlowConfig, LoadingReason } from "./show-dialog-data-entry-flow";
 
 @customElement("step-flow-loading")
 class StepFlowLoading extends LitElement {
-  protected render(): TemplateResult | void {
+  @property({ attribute: false }) public flowConfig!: FlowConfig;
+
+  @property({ attribute: false }) public hass!: HomeAssistant;
+
+  @property({ attribute: false }) public loadingReason!: LoadingReason;
+
+  @property() public handler?: string;
+
+  @property({ attribute: false }) public step?: DataEntryFlowStep | null;
+
+  protected render(): TemplateResult {
+    const description = this.flowConfig.renderLoadingDescription(
+      this.hass,
+      this.loadingReason,
+      this.handler,
+      this.step
+    );
     return html`
       <div class="init-spinner">
-        <paper-spinner-lite active></paper-spinner-lite>
+        ${description ? html`<div>${description}</div>` : ""}
+        <ha-circular-progress indeterminate></ha-circular-progress>
       </div>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      .init-spinner {
-        padding: 50px 100px;
-        text-align: center;
-      }
-    `;
-  }
+  static styles = css`
+    .init-spinner {
+      padding: 50px 100px;
+      text-align: center;
+    }
+    ha-circular-progress {
+      margin-top: 16px;
+    }
+  `;
 }
 
 declare global {

@@ -1,88 +1,102 @@
-import { HomeAssistant } from "../types";
-import { Connection } from "home-assistant-js-websocket";
+import type { Connection, HassEventBase } from "home-assistant-js-websocket";
+import { getCollection } from "home-assistant-js-websocket";
+import type { HuiBadge } from "../panels/lovelace/badges/hui-badge";
+import type { HuiCard } from "../panels/lovelace/cards/hui-card";
+import type { HuiSection } from "../panels/lovelace/sections/hui-section";
+import type { Lovelace } from "../panels/lovelace/types";
+import type { HomeAssistant } from "../types";
+import type { LovelaceSectionConfig } from "./lovelace/config/section";
+import type { LegacyLovelaceConfig } from "./lovelace/config/types";
+import { fetchConfig } from "./lovelace/config/types";
+import type { LovelaceViewConfig } from "./lovelace/config/view";
 
-export interface LovelaceConfig {
-  title?: string;
-  views: LovelaceViewConfig[];
-  background?: string;
-  resources?: Array<{ type: "css" | "js" | "module" | "html"; url: string }>;
+export interface LovelacePanelConfig {
+  mode: "yaml" | "storage";
 }
 
-export interface LovelaceViewConfig {
+export interface LovelaceViewElement extends HTMLElement {
+  hass?: HomeAssistant;
+  lovelace?: Lovelace;
+  narrow?: boolean;
   index?: number;
-  title?: string;
-  badges?: string[];
-  cards?: LovelaceCardConfig[];
-  path?: string;
-  icon?: string;
-  theme?: string;
-  panel?: boolean;
-  background?: string;
+  cards?: HuiCard[];
+  badges?: HuiBadge[];
+  sections?: HuiSection[];
+  isStrategy: boolean;
+  setConfig(config: LovelaceViewConfig): void;
 }
 
-export interface LovelaceCardConfig {
+export interface LovelaceSectionElement extends HTMLElement {
+  hass?: HomeAssistant;
+  lovelace?: Lovelace;
+  preview?: boolean;
+  viewIndex?: number;
   index?: number;
-  view_index?: number;
-  type: string;
-  [key: string]: any;
+  cards?: HuiCard[];
+  isStrategy: boolean;
+  importOnly?: boolean;
+  setConfig(config: LovelaceSectionConfig): void;
 }
 
-export interface ToggleActionConfig {
-  action: "toggle";
-}
-
-export interface CallServiceActionConfig {
-  action: "call-service";
-  service: string;
-  service_data?: {
-    entity_id?: string | [string];
-    [key: string]: any;
+type LovelaceUpdatedEvent = HassEventBase & {
+  event_type: "lovelace_updated";
+  data: {
+    url_path: string | null;
+    mode: "yaml" | "storage";
   };
-}
+};
 
-export interface NavigateActionConfig {
-  action: "navigate";
-  navigation_path: string;
-}
+export const subscribeLovelaceUpdates = (
+  conn: Connection,
+  urlPath: string | null,
+  onChange: () => void
+) =>
+  conn.subscribeEvents<LovelaceUpdatedEvent>((ev) => {
+    if (ev.data.url_path === urlPath) {
+      onChange();
+    }
+  }, "lovelace_updated");
 
-export interface MoreInfoActionConfig {
-  action: "more-info";
-}
+export const getLovelaceCollection = (
+  conn: Connection,
+  urlPath: string | null = null
+) =>
+  getCollection(
+    conn,
+    `_lovelace_${urlPath ?? ""}`,
+    (conn2) => fetchConfig(conn2, urlPath, false),
+    (_conn, store) =>
+      subscribeLovelaceUpdates(conn, urlPath, () =>
+        fetchConfig(conn, urlPath, false).then((config) =>
+          store.setState(config, true)
+        )
+      )
+  );
 
-export interface NoActionConfig {
-  action: "none";
-}
-
-export type ActionConfig =
-  | ToggleActionConfig
-  | CallServiceActionConfig
-  | NavigateActionConfig
-  | MoreInfoActionConfig
-  | NoActionConfig;
-
-export const fetchConfig = (
+// Legacy functions to support cast for Home Assistion < 0.107
+const fetchLegacyConfig = (
   conn: Connection,
   force: boolean
-): Promise<LovelaceConfig> =>
+): Promise<LegacyLovelaceConfig> =>
   conn.sendMessagePromise({
     type: "lovelace/config",
     force,
   });
 
-export const saveConfig = (
-  hass: HomeAssistant,
-  config: LovelaceConfig
-): Promise<void> =>
-  hass.callWS({
-    type: "lovelace/config/save",
-    config,
-  });
-
-export const subscribeLovelaceUpdates = (
+const subscribeLegacyLovelaceUpdates = (
   conn: Connection,
   onChange: () => void
 ) => conn.subscribeEvents(onChange, "lovelace_updated");
 
-export interface WindowWithLovelaceProm extends Window {
-  llConfProm?: Promise<LovelaceConfig>;
-}
+export const getLegacyLovelaceCollection = (conn: Connection) =>
+  getCollection(
+    conn,
+    "_lovelace",
+    (conn2) => fetchLegacyConfig(conn2, false),
+    (_conn, store) =>
+      subscribeLegacyLovelaceUpdates(conn, () =>
+        fetchLegacyConfig(conn, false).then((config) =>
+          store.setState(config, true)
+        )
+      )
+  );

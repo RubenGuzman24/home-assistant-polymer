@@ -1,83 +1,64 @@
-import "@polymer/app-layout/app-toolbar/app-toolbar";
-import "@polymer/paper-dialog-scrollable/paper-dialog-scrollable";
-import "@polymer/paper-icon-button/paper-icon-button";
-import { html } from "@polymer/polymer/lib/utils/html-tag";
-import { PolymerElement } from "@polymer/polymer/polymer-element";
-
+import type { CSSResultGroup } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { createCloseHeading } from "../../../../src/components/ha-dialog";
 import "../../../../src/components/ha-markdown";
-import "../../../../src/resources/ha-style";
-import "../../../../src/components/dialog/ha-paper-dialog";
-import { customElement } from "lit-element";
-import { PaperDialogElement } from "@polymer/paper-dialog";
+import { haStyleDialog } from "../../../../src/resources/styles";
+import type { HomeAssistant } from "../../../../src/types";
+import { hassioStyle } from "../../resources/hassio-style";
+import type { HassioMarkdownDialogParams } from "./show-dialog-hassio-markdown";
 
 @customElement("dialog-hassio-markdown")
-class HassioMarkdownDialog extends PolymerElement {
-  static get template() {
+class HassioMarkdownDialog extends LitElement {
+  @property({ attribute: false }) public hass!: HomeAssistant;
+
+  // eslint-disable-next-line lit/no-native-attributes
+  @property() public title!: string;
+
+  @property() public content!: string;
+
+  @state() private _opened = false;
+
+  public showDialog(params: HassioMarkdownDialogParams) {
+    this.title = params.title;
+    this.content = params.content;
+    this._opened = true;
+  }
+
+  public closeDialog() {
+    this._opened = false;
+  }
+
+  protected render() {
+    if (!this._opened) {
+      return nothing;
+    }
     return html`
-      <style include="ha-style-dialog">
-        ha-paper-dialog {
-          min-width: 350px;
-          font-size: 14px;
-          border-radius: 2px;
-        }
-        app-toolbar {
-          margin: 0;
-          padding: 0 16px;
-          color: var(--primary-text-color);
-          background-color: var(--secondary-background-color);
-        }
-        app-toolbar [main-title] {
-          margin-left: 16px;
-        }
-        paper-checkbox {
-          display: block;
-          margin: 4px;
-        }
-        @media all and (max-width: 450px), all and (max-height: 500px) {
-          ha-paper-dialog {
-            max-height: 100%;
-          }
-          ha-paper-dialog::before {
-            content: "";
-            position: fixed;
-            z-index: -1;
-            top: 0px;
-            left: 0px;
-            right: 0px;
-            bottom: 0px;
-            background-color: inherit;
-          }
-          app-toolbar {
-            color: var(--text-primary-color);
-            background-color: var(--primary-color);
-          }
-        }
-      </style>
-      <ha-paper-dialog id="dialog" with-backdrop="">
-        <app-toolbar>
-          <paper-icon-button
-            icon="hassio:close"
-            dialog-dismiss=""
-          ></paper-icon-button>
-          <div main-title="">[[title]]</div>
-        </app-toolbar>
-        <paper-dialog-scrollable>
-          <ha-markdown content="[[content]]"></ha-markdown>
-        </paper-dialog-scrollable>
-      </ha-paper-dialog>
+      <ha-dialog
+        open
+        @closed=${this.closeDialog}
+        .heading=${createCloseHeading(this.hass, this.title)}
+      >
+        <ha-markdown
+          .content=${this.content || ""}
+          dialogInitialFocus
+        ></ha-markdown>
+      </ha-dialog>
     `;
   }
 
-  static get properties() {
-    return {
-      title: String,
-      content: String,
-    };
-  }
-
-  public showDialog(params) {
-    this.setProperties(params);
-    (this.$.dialog as PaperDialogElement).open();
+  static get styles(): CSSResultGroup {
+    return [
+      haStyleDialog,
+      hassioStyle,
+      css`
+        @media all and (max-width: 450px), all and (max-height: 500px) {
+          ha-markdown {
+            padding: 16px;
+          }
+        }
+      `,
+    ];
   }
 }
 

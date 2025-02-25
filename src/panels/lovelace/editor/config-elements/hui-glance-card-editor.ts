@@ -1,179 +1,140 @@
+import { html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
 import {
-  html,
-  LitElement,
-  TemplateResult,
-  customElement,
-  property,
-} from "lit-element";
-import "@polymer/paper-dropdown-menu/paper-dropdown-menu";
-import "@polymer/paper-item/paper-item";
-import "@polymer/paper-listbox/paper-listbox";
-import "@polymer/paper-toggle-button/paper-toggle-button";
-
-import "../../../../components/entity/state-badge";
-import "../../components/hui-theme-select-editor";
-import "../../components/hui-entity-editor";
-import "../../../../components/ha-card";
-import "../../../../components/ha-icon";
-
-import { struct } from "../../common/structs/struct";
-import { processEditorEntities } from "../process-editor-entities";
-import { EntitiesEditorEvent, EditorTarget } from "../types";
-import { HomeAssistant } from "../../../../types";
-import { LovelaceCardEditor } from "../../types";
+  array,
+  assert,
+  assign,
+  boolean,
+  number,
+  object,
+  optional,
+  string,
+  union,
+} from "superstruct";
 import { fireEvent } from "../../../../common/dom/fire_event";
-import { configElementStyle } from "./config-elements-style";
-import { GlanceCardConfig, ConfigEntity } from "../../cards/types";
+import "../../../../components/ha-form/ha-form";
+import type { SchemaUnion } from "../../../../components/ha-form/types";
+import type { HomeAssistant } from "../../../../types";
+import type { ConfigEntity, GlanceCardConfig } from "../../cards/types";
+import "../../components/hui-entity-editor";
+import type { LovelaceCardEditor } from "../../types";
+import { processEditorEntities } from "../process-editor-entities";
+import { baseLovelaceCardConfig } from "../structs/base-card-struct";
+import { entitiesConfigStruct } from "../structs/entities-struct";
 
-const entitiesConfigStruct = struct.union([
+const cardConfigStruct = assign(
+  baseLovelaceCardConfig,
+  object({
+    title: optional(union([string(), number()])),
+    theme: optional(string()),
+    columns: optional(number()),
+    show_name: optional(boolean()),
+    show_state: optional(boolean()),
+    show_icon: optional(boolean()),
+    state_color: optional(boolean()),
+    entities: array(entitiesConfigStruct),
+  })
+);
+
+const SCHEMA = [
+  { name: "title", selector: { text: {} } },
   {
-    entity: "entity-id",
-    name: "string?",
-    icon: "icon?",
+    name: "",
+    type: "grid",
+    schema: [
+      { name: "columns", selector: { number: { min: 1, mode: "box" } } },
+      { name: "theme", selector: { theme: {} } },
+    ],
   },
-  "entity-id",
-]);
-
-const cardConfigStruct = struct({
-  type: "string",
-  title: "string|number?",
-  theme: "string?",
-  columns: "number?",
-  show_name: "boolean?",
-  show_state: "boolean?",
-  show_icon: "boolean?",
-  entities: [entitiesConfigStruct],
-});
+  {
+    name: "",
+    type: "grid",
+    column_min_width: "100px",
+    schema: [
+      { name: "show_name", selector: { boolean: {} } },
+      { name: "show_icon", selector: { boolean: {} } },
+      { name: "show_state", selector: { boolean: {} } },
+    ],
+  },
+  { name: "state_color", selector: { boolean: {} } },
+] as const;
 
 @customElement("hui-glance-card-editor")
-export class HuiGlanceCardEditor extends LitElement
-  implements LovelaceCardEditor {
-  @property() public hass?: HomeAssistant;
+export class HuiGlanceCardEditor
+  extends LitElement
+  implements LovelaceCardEditor
+{
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: GlanceCardConfig;
+  @state() private _config?: GlanceCardConfig;
 
-  @property() private _configEntities?: ConfigEntity[];
+  @state() private _configEntities?: ConfigEntity[];
 
   public setConfig(config: GlanceCardConfig): void {
-    config = cardConfigStruct(config);
+    assert(config, cardConfigStruct);
     this._config = config;
     this._configEntities = processEditorEntities(config.entities);
   }
 
-  get _title(): string {
-    return this._config!.title || "";
-  }
-
-  get _theme(): string {
-    return this._config!.theme || "Backend-selected";
-  }
-
-  get _columns(): number {
-    return this._config!.columns || NaN;
-  }
-
-  get _show_name(): boolean {
-    return this._config!.show_name || true;
-  }
-
-  get _show_icon(): boolean {
-    return this._config!.show_icon || true;
-  }
-
-  get _show_state(): boolean {
-    return this._config!.show_state || true;
-  }
-
-  protected render(): TemplateResult | void {
-    if (!this.hass) {
-      return html``;
+  protected render() {
+    if (!this.hass || !this._config) {
+      return nothing;
     }
 
+    const data = {
+      show_name: true,
+      show_icon: true,
+      show_state: true,
+      ...this._config,
+    };
+
     return html`
-      ${configElementStyle}
-      <div class="card-config">
-        <paper-input
-          label="Title"
-          .value="${this._title}"
-          .configValue="${"title"}"
-          @value-changed="${this._valueChanged}"
-        ></paper-input>
-        <div class="side-by-side">
-          <hui-theme-select-editor
-            .hass="${this.hass}"
-            .value="${this._theme}"
-            .configValue="${"theme"}"
-            @theme-changed="${this._valueChanged}"
-          ></hui-theme-select-editor>
-          <paper-input
-            label="Columns"
-            type="number"
-            .value="${this._columns}"
-            .configValue="${"columns"}"
-            @value-changed="${this._valueChanged}"
-          ></paper-input>
-        </div>
-        <div class="side-by-side">
-          <paper-toggle-button
-            ?checked="${this._show_name !== false}"
-            .configValue="${"show_name"}"
-            @change="${this._valueChanged}"
-            >Show Name?</paper-toggle-button
-          >
-          <paper-toggle-button
-            ?checked="${this._show_icon !== false}"
-            .configValue="${"show_icon"}"
-            @change="${this._valueChanged}"
-            >Show Icon?</paper-toggle-button
-          >
-          <paper-toggle-button
-            ?checked="${this._show_state !== false}"
-            .configValue="${"show_state"}"
-            @change="${this._valueChanged}"
-            >Show State?</paper-toggle-button
-          >
-        </div>
-      </div>
+      <ha-form
+        .hass=${this.hass}
+        .data=${data}
+        .schema=${SCHEMA}
+        .computeLabel=${this._computeLabelCallback}
+        @value-changed=${this._valueChanged}
+      ></ha-form>
       <hui-entity-editor
-        .hass="${this.hass}"
-        .entities="${this._configEntities}"
-        @entities-changed="${this._valueChanged}"
+        .hass=${this.hass}
+        .entities=${this._configEntities}
+        @entities-changed=${this._entitiesChanged}
       ></hui-entity-editor>
     `;
   }
 
-  private _valueChanged(ev: EntitiesEditorEvent): void {
-    if (!this._config || !this.hass) {
-      return;
-    }
-    const target = ev.target! as EditorTarget;
-
-    if (target.configValue && this[`_${target.configValue}`] === target.value) {
-      return;
-    }
-    if (ev.detail && ev.detail.entities) {
-      this._config.entities = ev.detail.entities;
-      this._configEntities = processEditorEntities(this._config.entities);
-    } else if (target.configValue) {
-      if (
-        target.value === "" ||
-        (target.type === "number" && isNaN(Number(target.value)))
-      ) {
-        delete this._config[target.configValue!];
-      } else {
-        let value: any = target.value;
-        if (target.type === "number") {
-          value = Number(value);
-        }
-        this._config = {
-          ...this._config,
-          [target.configValue!]:
-            target.checked !== undefined ? target.checked : value,
-        };
-      }
-    }
-    fireEvent(this, "config-changed", { config: this._config });
+  private _valueChanged(ev: CustomEvent): void {
+    const config = ev.detail.value;
+    fireEvent(this, "config-changed", { config });
   }
+
+  private _entitiesChanged(ev: CustomEvent): void {
+    let config = this._config!;
+    config = { ...config, entities: ev.detail.entities! };
+
+    this._configEntities = processEditorEntities(this._config!.entities);
+    fireEvent(this, "config-changed", { config });
+  }
+
+  private _computeLabelCallback = (schema: SchemaUnion<typeof SCHEMA>) => {
+    switch (schema.name) {
+      case "theme":
+        return `${this.hass!.localize(
+          "ui.panel.lovelace.editor.card.generic.theme"
+        )} (${this.hass!.localize(
+          "ui.panel.lovelace.editor.card.config.optional"
+        )})`;
+      case "columns":
+        return this.hass!.localize(
+          `ui.panel.lovelace.editor.card.glance.${schema.name}`
+        );
+      default:
+        return this.hass!.localize(
+          `ui.panel.lovelace.editor.card.generic.${schema.name}`
+        );
+    }
+  };
 }
 
 declare global {

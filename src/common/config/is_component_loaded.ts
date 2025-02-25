@@ -1,9 +1,7 @@
-import { HomeAssistant } from "../../types";
+import type { HomeAssistant } from "../../types";
 
 /** Return if a component is loaded. */
-export default function isComponentLoaded(
+export const isComponentLoaded = (
   hass: HomeAssistant,
   component: string
-): boolean {
-  return hass && hass.config.components.indexOf(component) !== -1;
-}
+): boolean => hass && hass.config.components.includes(component);

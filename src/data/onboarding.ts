@@ -1,7 +1,15 @@
+import type { HomeAssistant } from "../types";
 import { handleFetchPromise } from "../util/hass-call-api";
-import { HomeAssistant } from "../types";
 
-// tslint:disable-next-line: no-empty-interface
+export interface InstallationType {
+  installation_type:
+    | "Home Assistant Operating System"
+    | "Home Assistant Container"
+    | "Home Assistant Supervised"
+    | "Home Assistant Core"
+    | "Unknown";
+}
+
 export interface OnboardingCoreConfigStepResponse {}
 
 export interface OnboardingUserStepResponse {
@@ -12,10 +20,13 @@ export interface OnboardingIntegrationStepResponse {
   auth_code: string;
 }
 
+export interface OnboardingAnalyticsStepResponse {}
+
 export interface OnboardingResponses {
   user: OnboardingUserStepResponse;
   core_config: OnboardingCoreConfigStepResponse;
   integration: OnboardingIntegrationStepResponse;
+  analytics: OnboardingAnalyticsStepResponse;
 }
 
 export type ValidOnboardingStep = keyof OnboardingResponses;
@@ -49,12 +60,31 @@ export const onboardCoreConfigStep = (hass: HomeAssistant) =>
     "onboarding/core_config"
   );
 
+export const onboardAnalyticsStep = (hass: HomeAssistant) =>
+  hass.callApi<OnboardingAnalyticsStepResponse>("POST", "onboarding/analytics");
+
 export const onboardIntegrationStep = (
   hass: HomeAssistant,
-  params: { client_id: string }
+  params: { client_id: string; redirect_uri: string }
 ) =>
   hass.callApi<OnboardingIntegrationStepResponse>(
     "POST",
     "onboarding/integration",
     params
   );
+
+export const fetchInstallationType = async (): Promise<InstallationType> => {
+  const response = await fetch("/api/onboarding/installation_type", {
+    method: "GET",
+  });
+
+  if (response.status === 401) {
+    throw Error("unauthorized");
+  }
+
+  if (response.status === 404) {
+    throw Error("not_found");
+  }
+
+  return response.json();
+};

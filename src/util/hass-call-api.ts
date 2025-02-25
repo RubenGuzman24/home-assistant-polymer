@@ -1,5 +1,5 @@
+import type { Auth } from "home-assistant-js-websocket";
 import { fetchWithAuth } from "./fetch-with-auth";
-import { Auth } from "home-assistant-js-websocket";
 
 export const handleFetchPromise = async <T>(
   fetchPromise: Promise<Response>
@@ -8,7 +8,8 @@ export const handleFetchPromise = async <T>(
 
   try {
     response = await fetchPromise;
-  } catch (err) {
+  } catch (_err: any) {
+    // eslint-disable-next-line no-throw-literal
     throw {
       error: "Request error",
       status_code: undefined,
@@ -23,7 +24,8 @@ export const handleFetchPromise = async <T>(
   if (contentType && contentType.includes("application/json")) {
     try {
       body = await response.json();
-    } catch (err) {
+    } catch (err: any) {
+      // eslint-disable-next-line no-throw-literal
       throw {
         error: "Unable to parse JSON response",
         status_code: err.status,
@@ -35,6 +37,7 @@ export const handleFetchPromise = async <T>(
   }
 
   if (!response.ok) {
+    // eslint-disable-next-line no-throw-literal
     throw {
       error: `Response error: ${response.status}`,
       status_code: response.status,
@@ -42,20 +45,21 @@ export const handleFetchPromise = async <T>(
     };
   }
 
-  return (body as unknown) as T;
+  return body as unknown as T;
 };
 
 export default async function hassCallApi<T>(
   auth: Auth,
   method: string,
   path: string,
-  parameters?: {}
+  parameters?: Record<string, unknown>,
+  headers?: Record<string, string>
 ) {
   const url = `${auth.data.hassUrl}/api/${path}`;
 
   const init: RequestInit = {
     method,
-    headers: {},
+    headers: headers || {},
   };
 
   if (parameters) {
@@ -65,4 +69,29 @@ export default async function hassCallApi<T>(
   }
 
   return handleFetchPromise<T>(fetchWithAuth(auth, url, init));
+}
+
+export async function hassCallApiRaw(
+  auth: Auth,
+  method: string,
+  path: string,
+  parameters?: Record<string, unknown>,
+  headers?: Record<string, string>,
+  signal?: AbortSignal
+) {
+  const url = `${auth.data.hassUrl}/api/${path}`;
+
+  const init: RequestInit = {
+    method,
+    headers: headers || {},
+    signal: signal,
+  };
+
+  if (parameters) {
+    // @ts-ignore
+    init.headers["Content-Type"] = "application/json;charset=UTF-8";
+    init.body = JSON.stringify(parameters);
+  }
+
+  return fetchWithAuth(auth, url, init);
 }

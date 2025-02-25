@@ -1,41 +1,37 @@
-import { html, TemplateResult } from "lit-element";
-
+import type { CSSResultGroup } from "lit";
+import { css } from "lit";
 import { computeCardSize } from "../common/compute-card-size";
 import { HuiStackCard } from "./hui-stack-card";
 
 class HuiVerticalStackCard extends HuiStackCard {
-  public getCardSize() {
-    let totalSize = 0;
-
+  public async getCardSize() {
     if (!this._cards) {
-      return totalSize;
+      return 0;
     }
+
+    const promises: (Promise<number> | number)[] = [];
 
     for (const element of this._cards) {
-      totalSize += computeCardSize(element);
+      promises.push(computeCardSize(element));
     }
 
-    return totalSize;
+    const results = await Promise.all(promises);
+
+    return results.reduce((partial_sum, a) => partial_sum + a, 0);
   }
 
-  protected renderStyle(): TemplateResult {
-    return html`
-      <style>
+  static get styles(): CSSResultGroup {
+    return [
+      super.sharedStyles,
+      css`
         #root {
           display: flex;
           flex-direction: column;
+          height: 100%;
+          gap: var(--vertical-stack-card-gap, var(--stack-card-gap, 8px));
         }
-        #root > * {
-          margin: 4px 0 4px 0;
-        }
-        #root > *:first-child {
-          margin-top: 0;
-        }
-        #root > *:last-child {
-          margin-bottom: 0;
-        }
-      </style>
-    `;
+      `,
+    ];
   }
 }
 

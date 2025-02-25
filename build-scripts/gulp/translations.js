@@ -1,93 +1,112 @@
-const del = require("del");
-const path = require("path");
-const gulp = require("gulp");
-const fs = require("fs");
-const foreach = require("gulp-foreach");
-const hash = require("gulp-hash");
-const hashFilename = require("gulp-hash-filename");
-const merge = require("gulp-merge-json");
-const minify = require("gulp-jsonminify");
-const rename = require("gulp-rename");
-const transform = require("gulp-json-transform");
+/* eslint-disable max-classes-per-file */
 
-const inDir = "translations";
-const workDir = "build-translations";
-const fullDir = workDir + "/full";
-const coreDir = workDir + "/core";
-const outDir = workDir + "/output";
+import { deleteAsync } from "del";
+import { glob } from "glob";
+import gulp from "gulp";
+import rename from "gulp-rename";
+import merge from "lodash.merge";
+import { createHash } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { PassThrough, Transform } from "node:stream";
+import { finished } from "node:stream/promises";
+import env from "../env.cjs";
+import paths from "../paths.cjs";
+import "./fetch-nightly-translations.js";
 
-String.prototype.rsplit = function(sep, maxsplit) {
-  var split = this.split(sep);
-  return maxsplit
-    ? [split.slice(0, -maxsplit).join(sep)].concat(split.slice(-maxsplit))
-    : split;
+const inFrontendDir = "translations/frontend";
+const inBackendDir = "translations/backend";
+const workDir = "build/translations";
+const outDir = join(workDir, "output");
+const EN_SRC = join(paths.translations_src, "en.json");
+const TEST_LOCALE = "en-x-test";
+
+let mergeBackend = false;
+
+gulp.task(
+  "translations-enable-merge-backend",
+  gulp.parallel(async () => {
+    mergeBackend = true;
+  }, "allow-setup-fetch-nightly-translations")
+);
+
+// Transform stream to apply a function on Vinyl JSON files (buffer mode only).
+// The provided function can either return a new object, or an array of
+// [object, subdirectory] pairs for fragmentizing the JSON.
+class CustomJSON extends Transform {
+  constructor(func, reviver = null) {
+    super({ objectMode: true });
+    this._func = func;
+    this._reviver = reviver;
+  }
+
+  async _transform(file, _, callback) {
+    try {
+      let obj = JSON.parse(file.contents.toString(), this._reviver);
+      if (this._func) obj = this._func(obj, file.path);
+      for (const [outObj, dir] of Array.isArray(obj) ? obj : [[obj, ""]]) {
+        const outFile = file.clone({ contents: false });
+        outFile.contents = Buffer.from(JSON.stringify(outObj));
+        outFile.dirname += `/${dir}`;
+        this.push(outFile);
+      }
+      callback(null);
+    } catch (err) {
+      callback(err);
+    }
+  }
+}
+
+// Transform stream to merge Vinyl JSON files (buffer mode only).
+class MergeJSON extends Transform {
+  _objects = [];
+
+  constructor(stem, startObj = {}, reviver = null) {
+    super({ objectMode: true, allowHalfOpen: false });
+    this._stem = stem;
+    this._startObj = structuredClone(startObj);
+    this._reviver = reviver;
+  }
+
+  async _transform(file, _, callback) {
+    try {
+      this._objects.push(JSON.parse(file.contents.toString(), this._reviver));
+      if (!this._outFile) this._outFile = file.clone({ contents: false });
+      callback(null);
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  async _flush(callback) {
+    try {
+      const mergedObj = merge(this._startObj, ...this._objects);
+      this._outFile.contents = Buffer.from(JSON.stringify(mergedObj));
+      this._outFile.stem = this._stem;
+      callback(null, this._outFile);
+    } catch (err) {
+      callback(err);
+    }
+  }
+}
+
+// Utility to flatten object keys to single level using separator
+const flatten = (data, prefix = "", sep = ".") => {
+  const output = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (typeof value === "object") {
+      Object.assign(output, flatten(value, prefix + key + sep, sep));
+    } else {
+      output[prefix + key] = value;
+    }
+  }
+  return output;
 };
 
-// Panel translations which should be split from the core translations. These
-// should mirror the fragment definitions in polymer.json, so that we load
-// additional resources at equivalent points.
-const TRANSLATION_FRAGMENTS = [
-  "config",
-  "history",
-  "logbook",
-  "mailbox",
-  "profile",
-  "shopping-list",
-  "page-authorize",
-  "page-demo",
-  "page-onboarding",
-  "developer-tools",
-];
-
-const tasks = [];
-
-function recursiveFlatten(prefix, data) {
-  let output = {};
-  Object.keys(data).forEach(function(key) {
-    if (typeof data[key] === "object") {
-      output = Object.assign(
-        {},
-        output,
-        recursiveFlatten(prefix + key + ".", data[key])
-      );
-    } else {
-      output[prefix + key] = data[key];
-    }
-  });
-  return output;
-}
-
-function flatten(data) {
-  return recursiveFlatten("", data);
-}
-
-function emptyFilter(data) {
-  const newData = {};
-  Object.keys(data).forEach((key) => {
-    if (data[key]) {
-      if (typeof data[key] === "object") {
-        newData[key] = emptyFilter(data[key]);
-      } else {
-        newData[key] = data[key];
-      }
-    }
-  });
-  return newData;
-}
-
-function recursiveEmpty(data) {
-  const newData = {};
-  Object.keys(data).forEach((key) => {
-    if (data[key]) {
-      if (typeof data[key] === "object") {
-        newData[key] = recursiveEmpty(data[key]);
-      } else {
-        newData[key] = "TRANSLATED";
-      }
-    }
-  });
-  return newData;
-}
+// Filter functions that can be passed directly to JSON.parse()
+const emptyReviver = (_key, value) => value || undefined;
+const testReviver = (_key, value) =>
+  value && typeof value === "string" ? "TRANSLATED" : value;
 
 /**
  * Replace Lokalise key placeholders with their actual values.
@@ -96,75 +115,44 @@ function recursiveEmpty(data) {
  * be included in src/translations/en.json, but still be usable while
  * developing locally.
  *
- * @link https://docs.lokalise.co/article/KO5SZWLLsy-key-referencing
+ * @link https://docs.lokalise.com/en/articles/1400528-key-referencing
  */
-const re_key_reference = /\[%key:([^%]+)%\]/;
-function lokalise_transform(data, original) {
+const KEY_REFERENCE = /\[%key:([^%]+)%\]/;
+const lokaliseTransform = (data, path, original = data) => {
   const output = {};
-  Object.entries(data).forEach(([key, value]) => {
-    if (value instanceof Object) {
-      output[key] = lokalise_transform(value, original);
+  for (const [key, value] of Object.entries(data)) {
+    if (typeof value === "object") {
+      output[key] = lokaliseTransform(value, path, original);
     } else {
-      output[key] = value.replace(re_key_reference, (match, key) => {
-        const replace = key.split("::").reduce((tr, k) => tr[k], original);
+      output[key] = value.replace(KEY_REFERENCE, (_match, lokalise_key) => {
+        const replace = lokalise_key.split("::").reduce((tr, k) => {
+          if (!tr) {
+            throw Error(`Invalid key placeholder ${lokalise_key} in ${path}`);
+          }
+          return tr[k];
+        }, original);
         if (typeof replace !== "string") {
-          throw Error(
-            `Invalid key placeholder ${key} in src/translations/en.json`
-          );
+          throw Error(`Invalid key placeholder ${lokalise_key} in ${path}`);
         }
         return replace;
       });
     }
-  });
-  return output;
-}
-
-let taskName = "clean-translations";
-gulp.task(taskName, function() {
-  return del([`${outDir}/**/*.json`]);
-});
-tasks.push(taskName);
-
-gulp.task("ensure-translations-build-dir", (done) => {
-  if (!fs.existsSync(workDir)) {
-    fs.mkdirSync(workDir);
   }
-  done();
-});
+  return output;
+};
 
-taskName = "create-test-metadata";
-gulp.task(
-  taskName,
-  gulp.series("ensure-translations-build-dir", function writeTestMetaData(cb) {
-    fs.writeFile(
-      workDir + "/testMetadata.json",
-      JSON.stringify({
-        test: {
-          nativeName: "Test",
-        },
-      }),
-      cb
-    );
-  })
-);
-tasks.push(taskName);
+gulp.task("clean-translations", () => deleteAsync([workDir]));
 
-taskName = "create-test-translation";
-gulp.task(
-  taskName,
-  gulp.series("create-test-metadata", function() {
-    return gulp
-      .src("src/translations/en.json")
-      .pipe(
-        transform(function(data, file) {
-          return recursiveEmpty(data);
-        })
-      )
-      .pipe(rename("test.json"))
-      .pipe(gulp.dest(workDir));
-  })
-);
-tasks.push(taskName);
+const makeWorkDir = () => mkdir(workDir, { recursive: true });
+
+const createTestTranslation = () =>
+  env.isProdBuild()
+    ? Promise.resolve()
+    : gulp
+        .src(EN_SRC)
+        .pipe(new CustomJSON(null, testReviver))
+        .pipe(rename(`${TEST_LOCALE}.json`))
+        .pipe(gulp.dest(workDir));
 
 /**
  * This task will build a master translation file, to be used as the base for
@@ -175,230 +163,174 @@ tasks.push(taskName);
  * project is buildable immediately after merging new translation keys, since
  * the Lokalise update to translations/en.json will not happen immediately.
  */
-taskName = "build-master-translation";
-gulp.task(
-  taskName,
-  gulp.series("clean-translations", function() {
-    return gulp
-      .src("src/translations/en.json")
-      .pipe(
-        transform(function(data, file) {
-          return lokalise_transform(data, data);
-        })
-      )
-      .pipe(rename("translationMaster.json"))
-      .pipe(gulp.dest(workDir));
-  })
-);
-tasks.push(taskName);
+const createMasterTranslation = () =>
+  gulp
+    .src([EN_SRC, ...(mergeBackend ? [`${inBackendDir}/en.json`] : [])])
+    .pipe(new CustomJSON(lokaliseTransform))
+    .pipe(new MergeJSON("en"))
+    .pipe(gulp.dest(workDir));
 
-taskName = "build-merged-translations";
-gulp.task(
-  taskName,
-  gulp.series("build-master-translation", function() {
-    return gulp
-      .src([inDir + "/*.json", workDir + "/test.json"], { allowEmpty: true })
-      .pipe(
-        foreach(function(stream, file) {
-          // For each language generate a merged json file. It begins with the master
-          // translation as a failsafe for untranslated strings, and merges all parent
-          // tags into one file for each specific subtag
-          //
-          // TODO: This is a naive interpretation of BCP47 that should be improved.
-          //       Will be OK for now as long as we don't have anything more complicated
-          //       than a base translation + region.
-          const tr = path.basename(file.history[0], ".json");
-          const subtags = tr.split("-");
-          const src = [workDir + "/translationMaster.json"];
-          for (let i = 1; i <= subtags.length; i++) {
-            const lang = subtags.slice(0, i).join("-");
-            if (lang === "test") {
-              src.push(workDir + "/test.json");
-            } else {
-              src.push(inDir + "/" + lang + ".json");
-            }
-          }
-          return gulp
-            .src(src, { allowEmpty: true })
-            .pipe(transform((data) => emptyFilter(data)))
-            .pipe(
-              merge({
-                fileName: tr + ".json",
-              })
-            )
-            .pipe(gulp.dest(fullDir));
-        })
-      );
-  })
-);
-tasks.push(taskName);
+const FRAGMENTS = ["base"];
 
-const splitTasks = [];
-TRANSLATION_FRAGMENTS.forEach((fragment) => {
-  taskName = "build-translation-fragment-" + fragment;
-  gulp.task(
-    taskName,
-    gulp.series("build-merged-translations", function() {
-      // Return only the translations for this fragment.
-      return gulp
-        .src(fullDir + "/*.json")
-        .pipe(
-          transform((data) => ({
-            ui: {
-              panel: {
-                [fragment]: data.ui.panel[fragment],
-              },
-            },
-          }))
-        )
-        .pipe(gulp.dest(workDir + "/" + fragment));
-    })
-  );
-  tasks.push(taskName);
-  splitTasks.push(taskName);
-});
+const setFragment = (fragment) => async () => {
+  FRAGMENTS[0] = fragment;
+};
 
-taskName = "build-translation-core";
-gulp.task(
-  taskName,
-  gulp.series("build-merged-translations", function() {
-    // Remove the fragment translations from the core translation.
-    return gulp
-      .src(fullDir + "/*.json")
-      .pipe(
-        transform((data) => {
-          TRANSLATION_FRAGMENTS.forEach((fragment) => {
-            delete data.ui.panel[fragment];
-          });
-          return data;
-        })
-      )
-      .pipe(gulp.dest(coreDir));
-  })
-);
-tasks.push(taskName);
-splitTasks.push(taskName);
+const panelFragment = (fragment) =>
+  fragment !== "base" &&
+  fragment !== "supervisor" &&
+  fragment !== "landing-page";
 
-taskName = "build-flattened-translations";
-gulp.task(
-  taskName,
-  gulp.series(...splitTasks, function() {
-    // Flatten the split versions of our translations, and move them into outDir
-    return gulp
-      .src(
-        TRANSLATION_FRAGMENTS.map(
-          (fragment) => workDir + "/" + fragment + "/*.json"
-        ).concat(coreDir + "/*.json"),
-        { base: workDir }
-      )
-      .pipe(
-        transform(function(data) {
-          // Polymer.AppLocalizeBehavior requires flattened json
-          return flatten(data);
-        })
-      )
-      .pipe(minify())
-      .pipe(hashFilename())
-      .pipe(
-        rename((filePath) => {
-          if (filePath.dirname === "core") {
-            filePath.dirname = "";
+const HASHES = new Map();
+
+const createTranslations = async () => {
+  // Parse and store the master to avoid repeating this for each locale, then
+  // add the panel fragments when processing the app.
+  const enMaster = JSON.parse(await readFile(`${workDir}/en.json`, "utf-8"));
+  if (FRAGMENTS[0] === "base") {
+    FRAGMENTS.push(...Object.keys(enMaster.ui.panel));
+  }
+
+  // The downstream pipeline is setup first.  It hashes the merged data for
+  // each locale, then fragmentizes and flattens the data for final output.
+  const translationFiles = await glob([
+    `${inFrontendDir}/!(en).json`,
+    ...(env.isProdBuild() ? [] : [`${workDir}/${TEST_LOCALE}.json`]),
+  ]);
+  const hashStream = new Transform({
+    objectMode: true,
+    transform: async (file, _, callback) => {
+      const hash = env.isProdBuild()
+        ? createHash("md5").update(file.contents).digest("hex")
+        : "dev";
+      HASHES.set(file.stem, hash);
+      file.stem += `-${hash}`;
+      callback(null, file);
+    },
+  }).setMaxListeners(translationFiles.length + 1);
+  const fragmentsStream = hashStream
+    .pipe(
+      new CustomJSON((data) =>
+        FRAGMENTS.map((fragment) => {
+          switch (fragment) {
+            case "base":
+              // Remove the panels and supervisor to create the base translations
+              return [
+                flatten({
+                  ...data,
+                  ui: { ...data.ui, panel: undefined },
+                  supervisor: undefined,
+                }),
+                "",
+              ];
+            case "supervisor":
+              // Supervisor key is at the top level
+              return [flatten(data.supervisor), ""];
+            case "landing-page":
+              // landing-page key is at the top level
+              return [flatten(data["landing-page"]), ""];
+            default:
+              // Create a fragment with only the given panel
+              return [
+                flatten(data.ui.panel[fragment], `ui.panel.${fragment}.`),
+                fragment,
+              ];
           }
         })
       )
-      .pipe(gulp.dest(outDir));
-  })
-);
-tasks.push(taskName);
+    )
+    .pipe(gulp.dest(outDir));
 
-taskName = "build-translation-fingerprints";
+  // Send the English master downstream first, then for each other locale
+  // generate merged JSON data to continue piping. It begins with the master
+  // translation as a failsafe for untranslated strings, and merges all parent
+  // tags into one file for each specific subtag
+  //
+  // TODO: This is a naive interpretation of BCP47 that should be improved.
+  //       Will be OK for now as long as we don't have anything more complicated
+  // than a base translation + region.
+  const masterStream = gulp
+    .src(`${workDir}/en.json`)
+    .pipe(new PassThrough({ objectMode: true }));
+  masterStream.pipe(hashStream, { end: false });
+  const mergesFinished = [finished(masterStream)];
+  for (const translationFile of translationFiles) {
+    const locale = basename(translationFile, ".json");
+    const subtags = locale.split("-");
+    const mergeFiles = [];
+    for (let i = 1; i <= subtags.length; i++) {
+      const lang = subtags.slice(0, i).join("-");
+      if (lang === TEST_LOCALE) {
+        mergeFiles.push(`${workDir}/${TEST_LOCALE}.json`);
+      } else if (lang !== "en") {
+        mergeFiles.push(`${inFrontendDir}/${lang}.json`);
+        if (mergeBackend) {
+          mergeFiles.push(`${inBackendDir}/${lang}.json`);
+        }
+      }
+    }
+    const mergeStream = gulp
+      .src(mergeFiles, { allowEmpty: true })
+      .pipe(new MergeJSON(locale, enMaster, emptyReviver));
+    mergesFinished.push(finished(mergeStream));
+    mergeStream.pipe(hashStream, { end: false });
+  }
+
+  // Wait for all merges to finish, then it's safe to end writing to the
+  // downstream pipeline and wait for all fragments to finish writing.
+  await Promise.all(mergesFinished);
+  hashStream.end();
+  await finished(fragmentsStream);
+};
+
+const writeTranslationMetaData = () =>
+  gulp
+    .src([`${paths.translations_src}/translationMetadata.json`])
+    .pipe(
+      new CustomJSON((meta) => {
+        // Add the test translation in development.
+        if (!env.isProdBuild()) {
+          meta[TEST_LOCALE] = { nativeName: "Translation Test" };
+        }
+        // Filter out locales without a native name, and add the hashes.
+        for (const locale of Object.keys(meta)) {
+          if (!meta[locale].nativeName) {
+            meta[locale] = undefined;
+            console.warn(
+              `Skipping locale ${locale} because native name is not translated.`
+            );
+          } else {
+            meta[locale].hash = HASHES.get(locale);
+          }
+        }
+        return {
+          fragments: FRAGMENTS.filter(panelFragment),
+          translations: meta,
+        };
+      })
+    )
+    .pipe(gulp.dest(workDir));
+
 gulp.task(
-  taskName,
-  gulp.series("build-flattened-translations", function() {
-    return gulp
-      .src(outDir + "/**/*.json")
-      .pipe(
-        rename({
-          extname: "",
-        })
-      )
-      .pipe(
-        hash({
-          algorithm: "md5",
-          hashLength: 32,
-          template: "<%= name %>.json",
-        })
-      )
-      .pipe(hash.manifest("translationFingerprints.json"))
-      .pipe(
-        transform(function(data) {
-          // After generating fingerprints of our translation files, consolidate
-          // all translation fragment fingerprints under the translation name key
-          const newData = {};
-          Object.entries(data).forEach(([key, value]) => {
-            const [path, _md5] = key.rsplit("-", 1);
-            // let translation = key;
-            let translation = path;
-            const parts = translation.split("/");
-            if (parts.length === 2) {
-              translation = parts[1];
-            }
-            if (!(translation in newData)) {
-              newData[translation] = {
-                fingerprints: {},
-              };
-            }
-            newData[translation].fingerprints[path] = value;
-          });
-          return newData;
-        })
-      )
-      .pipe(gulp.dest(workDir));
-  })
+  "build-translations",
+  gulp.series(
+    gulp.parallel(
+      "fetch-nightly-translations",
+      gulp.series("clean-translations", makeWorkDir)
+    ),
+    createTestTranslation,
+    createMasterTranslation,
+    createTranslations,
+    writeTranslationMetaData
+  )
 );
-tasks.push(taskName);
 
-taskName = "build-translations";
 gulp.task(
-  taskName,
-  gulp.series("build-translation-fingerprints", function() {
-    return gulp
-      .src(
-        [
-          "src/translations/translationMetadata.json",
-          workDir + "/testMetadata.json",
-          workDir + "/translationFingerprints.json",
-        ],
-        { allowEmpty: true }
-      )
-      .pipe(merge({}))
-      .pipe(
-        transform(function(data) {
-          const newData = {};
-          Object.entries(data).forEach(([key, value]) => {
-            // Filter out translations without native name.
-            if (data[key].nativeName) {
-              newData[key] = data[key];
-            } else {
-              console.warn(
-                `Skipping language ${key}. Native name was not translated.`
-              );
-            }
-            if (data[key]) newData[key] = value;
-          });
-          return newData;
-        })
-      )
-      .pipe(
-        transform((data) => ({
-          fragments: TRANSLATION_FRAGMENTS,
-          translations: data,
-        }))
-      )
-      .pipe(rename("translationMetadata.json"))
-      .pipe(gulp.dest(workDir));
-  })
+  "build-supervisor-translations",
+  gulp.series(setFragment("supervisor"), "build-translations")
 );
-tasks.push(taskName);
 
-module.exports = tasks;
+gulp.task(
+  "build-landing-page-translations",
+  gulp.series(setFragment("landing-page"), "build-translations")
+);

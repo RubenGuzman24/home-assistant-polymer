@@ -1,86 +1,205 @@
-import { HassEntity } from "home-assistant-js-websocket";
-import computeStateDomain from "./compute_state_domain";
-import formatDateTime from "../datetime/format_date_time";
-import formatDate from "../datetime/format_date";
-import formatTime from "../datetime/format_time";
-import { LocalizeFunc } from "../translations/localize";
+import type { HassConfig, HassEntity } from "home-assistant-js-websocket";
+import { UNAVAILABLE, UNKNOWN } from "../../data/entity";
+import type { EntityRegistryDisplayEntry } from "../../data/entity_registry";
+import type { FrontendLocaleData } from "../../data/translation";
+import { TimeZone } from "../../data/translation";
+import type { HomeAssistant } from "../../types";
+import { DURATION_UNITS, formatDuration } from "../datetime/format_duration";
+import { formatDate } from "../datetime/format_date";
+import { formatDateTime } from "../datetime/format_date_time";
+import { formatTime } from "../datetime/format_time";
+import {
+  formatNumber,
+  getNumberFormatOptions,
+  isNumericFromAttributes,
+} from "../number/format_number";
+import { blankBeforeUnit } from "../translations/blank_before_unit";
+import type { LocalizeFunc } from "../translations/localize";
+import { computeDomain } from "./compute_domain";
 
-export default (
+export const computeStateDisplay = (
   localize: LocalizeFunc,
   stateObj: HassEntity,
-  language: string
+  locale: FrontendLocaleData,
+  sensorNumericDeviceClasses: string[],
+  config: HassConfig,
+  entities: HomeAssistant["entities"],
+  state?: string
 ): string => {
-  let display: string | undefined;
-  const domain = computeStateDomain(stateObj);
+  const entity = entities?.[stateObj.entity_id] as
+    | EntityRegistryDisplayEntry
+    | undefined;
+  return computeStateDisplayFromEntityAttributes(
+    localize,
+    locale,
+    sensorNumericDeviceClasses,
+    config,
+    entity,
+    stateObj.entity_id,
+    stateObj.attributes,
+    state !== undefined ? state : stateObj.state
+  );
+};
 
-  if (domain === "binary_sensor") {
-    // Try device class translation, then default binary sensor translation
-    if (stateObj.attributes.device_class) {
-      display = localize(
-        `state.${domain}.${stateObj.attributes.device_class}.${stateObj.state}`
-      );
-    }
+export const computeStateDisplayFromEntityAttributes = (
+  localize: LocalizeFunc,
+  locale: FrontendLocaleData,
+  sensorNumericDeviceClasses: string[],
+  config: HassConfig,
+  entity: EntityRegistryDisplayEntry | undefined,
+  entityId: string,
+  attributes: any,
+  state: string
+): string => {
+  if (state === UNKNOWN || state === UNAVAILABLE) {
+    return localize(`state.default.${state}`);
+  }
 
-    if (!display) {
-      display = localize(`state.${domain}.default.${stateObj.state}`);
-    }
-  } else if (
-    stateObj.attributes.unit_of_measurement &&
-    !["unknown", "unavailable"].includes(stateObj.state)
+  const domain = computeDomain(entityId);
+  const is_number_domain =
+    domain === "counter" || domain === "number" || domain === "input_number";
+  // Entities with a `unit_of_measurement` or `state_class` are numeric values and should use `formatNumber`
+  if (
+    isNumericFromAttributes(
+      attributes,
+      domain === "sensor" ? sensorNumericDeviceClasses : []
+    ) ||
+    is_number_domain
   ) {
-    display = stateObj.state + " " + stateObj.attributes.unit_of_measurement;
-  } else if (domain === "input_datetime") {
-    let date: Date;
-    if (!stateObj.attributes.has_time) {
-      date = new Date(
-        stateObj.attributes.year,
-        stateObj.attributes.month - 1,
-        stateObj.attributes.day
-      );
-      display = formatDate(date, language);
-    } else if (!stateObj.attributes.has_date) {
-      const now = new Date();
-      date = new Date(
-        // Due to bugs.chromium.org/p/chromium/issues/detail?id=797548
-        // don't use artificial 1970 year.
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDay(),
-        stateObj.attributes.hour,
-        stateObj.attributes.minute
-      );
-      display = formatTime(date, language);
-    } else {
-      date = new Date(
-        stateObj.attributes.year,
-        stateObj.attributes.month - 1,
-        stateObj.attributes.day,
-        stateObj.attributes.hour,
-        stateObj.attributes.minute
-      );
-      display = formatDateTime(date, language);
+    // state is duration
+    if (
+      attributes.device_class === "duration" &&
+      attributes.unit_of_measurement &&
+      DURATION_UNITS.includes(attributes.unit_of_measurement)
+    ) {
+      try {
+        return formatDuration(
+          locale,
+          state,
+          attributes.unit_of_measurement,
+          entity?.display_precision
+        );
+      } catch (_err) {
+        // fallback to default
+      }
     }
-  } else if (domain === "zwave") {
-    if (["initializing", "dead"].includes(stateObj.state)) {
-      display = localize(
-        `state.zwave.query_stage.${stateObj.state}`,
-        "query_stage",
-        stateObj.attributes.query_stage
-      );
-    } else {
-      display = localize(`state.zwave.default.${stateObj.state}`);
+    if (attributes.device_class === "monetary") {
+      try {
+        return formatNumber(state, locale, {
+          style: "currency",
+          currency: attributes.unit_of_measurement,
+          minimumFractionDigits: 2,
+          // Override monetary options with number format
+          ...getNumberFormatOptions(
+            { state, attributes } as HassEntity,
+            entity
+          ),
+        });
+      } catch (_err) {
+        // fallback to default
+      }
     }
-  } else {
-    display = localize(`state.${domain}.${stateObj.state}`);
+
+    const value = formatNumber(
+      state,
+      locale,
+      getNumberFormatOptions({ state, attributes } as HassEntity, entity)
+    );
+
+    const unit =
+      (entity?.translation_key &&
+        localize(
+          `component.${entity.platform}.entity.${domain}.${entity.translation_key}.unit_of_measurement`
+        )) ||
+      attributes.unit_of_measurement;
+
+    if (unit) {
+      return `${value}${blankBeforeUnit(unit, locale)}${unit}`;
+    }
+
+    return value;
   }
 
-  // Fall back to default, component backend translation, or raw state if nothing else matches.
-  if (!display) {
-    display =
-      localize(`state.default.${stateObj.state}`) ||
-      localize(`component.${domain}.state.${stateObj.state}`) ||
-      stateObj.state;
+  if (["date", "input_datetime", "time"].includes(domain)) {
+    // If trying to display an explicit state, need to parse the explicit state to `Date` then format.
+    // Attributes aren't available, we have to use `state`.
+
+    // These are timezone agnostic, so we should NOT use the system timezone here.
+    try {
+      const components = state.split(" ");
+      if (components.length === 2) {
+        // Date and time.
+        return formatDateTime(
+          new Date(components.join("T")),
+          { ...locale, time_zone: TimeZone.local },
+          config
+        );
+      }
+      if (components.length === 1) {
+        if (state.includes("-")) {
+          // Date only.
+          return formatDate(
+            new Date(`${state}T00:00`),
+            { ...locale, time_zone: TimeZone.local },
+            config
+          );
+        }
+        if (state.includes(":")) {
+          // Time only.
+          const now = new Date();
+          return formatTime(
+            new Date(`${now.toISOString().split("T")[0]}T${state}`),
+            { ...locale, time_zone: TimeZone.local },
+            config
+          );
+        }
+      }
+      return state;
+    } catch (_e) {
+      // Formatting methods may throw error if date parsing doesn't go well,
+      // just return the state string in that case.
+      return state;
+    }
   }
 
-  return display;
+  // state is a timestamp
+  if (
+    [
+      "button",
+      "conversation",
+      "event",
+      "image",
+      "input_button",
+      "notify",
+      "scene",
+      "stt",
+      "tag",
+      "tts",
+      "wake_word",
+      "datetime",
+    ].includes(domain) ||
+    (domain === "sensor" && attributes.device_class === "timestamp")
+  ) {
+    try {
+      return formatDateTime(new Date(state), locale, config);
+    } catch (_err) {
+      return state;
+    }
+  }
+
+  return (
+    (entity?.translation_key &&
+      localize(
+        `component.${entity.platform}.entity.${domain}.${entity.translation_key}.state.${state}`
+      )) ||
+    // Return device class translation
+    (attributes.device_class &&
+      localize(
+        `component.${domain}.entity_component.${attributes.device_class}.state.${state}`
+      )) ||
+    // Return default translation
+    localize(`component.${domain}.entity_component._.state.${state}`) ||
+    // We don't know! Return the raw state.
+    state
+  );
 };

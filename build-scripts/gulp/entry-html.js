@@ -1,163 +1,292 @@
 // Tasks to generate entry HTML
-/* eslint-disable import/no-dynamic-require */
-/* eslint-disable global-require */
-const gulp = require("gulp");
-const fs = require("fs-extra");
-const path = require("path");
-const template = require("lodash.template");
-const minify = require("html-minifier").minify;
-const config = require("../paths.js");
 
-const templatePath = (tpl) =>
-  path.resolve(config.polymer_dir, "src/html/", `${tpl}.html.template`);
+import {
+  applyVersionsToRegexes,
+  compileRegex,
+  getPreUserAgentRegexes,
+} from "browserslist-useragent-regexp";
+import fs from "fs-extra";
+import gulp from "gulp";
+import { minify } from "html-minifier-terser";
+import template from "lodash.template";
+import { dirname, extname, resolve } from "node:path";
+import { htmlMinifierOptions, terserOptions } from "../bundle.cjs";
+import paths from "../paths.cjs";
 
-const demoTemplatePath = (tpl) =>
-  path.resolve(config.demo_dir, "src/html/", `${tpl}.html.template`);
-
-const readFile = (pth) => fs.readFileSync(pth).toString();
-
-const renderTemplate = (pth, data = {}, pathFunc = templatePath) => {
-  const compiled = template(readFile(pathFunc(pth)));
-  return compiled({ ...data, renderTemplate });
+// macOS companion app has no way to obtain the Safari version used by WKWebView,
+// and it is not in the default user agent string. So we add an additional regex
+// to serve modern based on a minimum macOS version. We take the minimum Safari
+// major version from browserslist and manually map that to a supported macOS
+// version. Note this assumes the user has kept Safari updated.
+const HA_MACOS_REGEX =
+  /Home Assistant\/[\d.]+ \(.+; macOS (\d+)\.(\d+)(?:\.(\d+))?\)/;
+const SAFARI_TO_MACOS = {
+  15: [10, 15, 0],
+  16: [11, 0, 0],
+  17: [12, 0, 0],
+  18: [13, 0, 0],
 };
 
-const renderDemoTemplate = (pth, data = {}) =>
-  renderTemplate(pth, data, demoTemplatePath);
-
-const minifyHtml = (content) =>
-  minify(content, {
-    collapseWhitespace: true,
-    minifyJS: true,
-    minifyCSS: true,
-    removeComments: true,
+const getCommonTemplateVars = () => {
+  const browserRegexes = getPreUserAgentRegexes({
+    env: "modern",
+    allowHigherVersions: true,
+    mobileToDesktop: true,
+    throwOnMissing: true,
   });
-
-const PAGES = ["onboarding", "authorize"];
-
-gulp.task("gen-pages-dev", (done) => {
-  for (const page of PAGES) {
-    const content = renderTemplate(page, {
-      latestPageJS: `/frontend_latest/${page}.js`,
-      latestHassIconsJS: "/frontend_latest/hass-icons.js",
-
-      es5Compatibility: "/frontend_es5/compatibility.js",
-      es5PageJS: `/frontend_es5/${page}.js`,
-      es5HassIconsJS: "/frontend_es5/hass-icons.js",
-    });
-
-    fs.outputFileSync(path.resolve(config.root, `${page}.html`), content);
-  }
-  done();
-});
-
-gulp.task("gen-pages-prod", (done) => {
-  const latestManifest = require(path.resolve(config.output, "manifest.json"));
-  const es5Manifest = require(path.resolve(config.output_es5, "manifest.json"));
-
-  for (const page of PAGES) {
-    const content = renderTemplate(page, {
-      latestPageJS: latestManifest[`${page}.js`],
-      latestHassIconsJS: latestManifest["hass-icons.js"],
-
-      es5Compatibility: es5Manifest["compatibility.js"],
-      es5PageJS: es5Manifest[`${page}.js`],
-      es5HassIconsJS: es5Manifest["hass-icons.js"],
-    });
-
-    fs.outputFileSync(
-      path.resolve(config.root, `${page}.html`),
-      minifyHtml(content)
+  const minSafariVersion = browserRegexes.find(
+    (regex) => regex.family === "safari"
+  )?.matchedVersions[0][0];
+  const minMacOSVersion = SAFARI_TO_MACOS[minSafariVersion];
+  if (!minMacOSVersion) {
+    throw Error(
+      `Could not find minimum MacOS version for Safari ${minSafariVersion}.`
     );
   }
-  done();
-});
+  const haMacOSRegex = applyVersionsToRegexes(
+    [
+      {
+        family: "ha_macos",
+        regex: HA_MACOS_REGEX,
+        matchedVersions: [minMacOSVersion],
+        requestVersions: [minMacOSVersion],
+      },
+    ],
+    { ignorePatch: true, allowHigherVersions: true }
+  );
+  return {
+    modernRegex: compileRegex(browserRegexes.concat(haMacOSRegex)).toString(),
+  };
+};
 
-gulp.task("gen-index-app-dev", (done) => {
-  // In dev mode we don't mangle names, so we hardcode urls. That way we can
-  // run webpack as last in watch mode, which blocks output.
-  const content = renderTemplate("index", {
-    latestAppJS: "/frontend_latest/app.js",
-    latestCoreJS: "/frontend_latest/core.js",
-    latestCustomPanelJS: "/frontend_latest/custom-panel.js",
-    latestHassIconsJS: "/frontend_latest/hass-icons.js",
-
-    es5Compatibility: "/frontend_es5/compatibility.js",
-    es5AppJS: "/frontend_es5/app.js",
-    es5CoreJS: "/frontend_es5/core.js",
-    es5CustomPanelJS: "/frontend_es5/custom-panel.js",
-    es5HassIconsJS: "/frontend_es5/hass-icons.js",
-  }).replace(/#THEMEC/g, "{{ theme_color }}");
-
-  fs.outputFileSync(path.resolve(config.root, "index.html"), content);
-  done();
-});
-
-gulp.task("gen-index-app-prod", (done) => {
-  const latestManifest = require(path.resolve(config.output, "manifest.json"));
-  const es5Manifest = require(path.resolve(config.output_es5, "manifest.json"));
-  const content = renderTemplate("index", {
-    latestAppJS: latestManifest["app.js"],
-    latestCoreJS: latestManifest["core.js"],
-    latestCustomPanelJS: latestManifest["custom-panel.js"],
-    latestHassIconsJS: latestManifest["hass-icons.js"],
-
-    es5Compatibility: es5Manifest["compatibility.js"],
-    es5AppJS: es5Manifest["app.js"],
-    es5CoreJS: es5Manifest["core.js"],
-    es5CustomPanelJS: es5Manifest["custom-panel.js"],
-    es5HassIconsJS: es5Manifest["hass-icons.js"],
+const renderTemplate = (templateFile, data = {}) => {
+  const compiled = template(
+    fs.readFileSync(templateFile, { encoding: "utf-8" })
+  );
+  return compiled({
+    ...data,
+    // Resolve any child/nested templates relative to the parent and pass the same data
+    renderTemplate: (childTemplate) =>
+      renderTemplate(resolve(dirname(templateFile), childTemplate), data),
   });
-  const minified = minifyHtml(content).replace(/#THEMEC/g, "{{ theme_color }}");
+};
 
-  fs.outputFileSync(path.resolve(config.root, "index.html"), minified);
-  done();
-});
+const WRAP_TAGS = { ".js": "script", ".css": "style" };
 
-gulp.task("gen-index-demo-dev", (done) => {
-  // In dev mode we don't mangle names, so we hardcode urls. That way we can
-  // run webpack as last in watch mode, which blocks output.
-  const content = renderDemoTemplate("index", {
-    latestDemoJS: "/frontend_latest/main.js",
+const minifyHtml = (content, ext) => {
+  const wrapTag = WRAP_TAGS[ext] || "";
+  const begTag = wrapTag && `<${wrapTag}>`;
+  const endTag = wrapTag && `</${wrapTag}>`;
+  return minify(begTag + content + endTag, {
+    ...htmlMinifierOptions,
+    conservativeCollapse: false,
+    minifyJS: terserOptions({
+      latestBuild: false, // Shared scripts should be ES5
+      isTestBuild: true, // Don't need source maps
+    }),
+  }).then((wrapped) =>
+    wrapTag ? wrapped.slice(begTag.length, -endTag.length) : wrapped
+  );
+};
 
-    es5Compatibility: "/frontend_es5/compatibility.js",
-    es5DemoJS: "/frontend_es5/main.js",
-  });
+// Function to generate a dev task for each project's configuration
+const genPagesDevTask =
+  (
+    pageEntries,
+    inputRoot,
+    outputRoot,
+    inputSub = "src/html",
+    publicRoot = ""
+  ) =>
+  async () => {
+    const commonVars = getCommonTemplateVars();
+    for (const [page, entries] of Object.entries(pageEntries)) {
+      const content = renderTemplate(
+        resolve(inputRoot, inputSub, `${page}.template`),
+        {
+          ...commonVars,
+          latestEntryJS: entries.map(
+            (entry) => `${publicRoot}/frontend_latest/${entry}.js`
+          ),
+          es5EntryJS: entries.map(
+            (entry) => `${publicRoot}/frontend_es5/${entry}.js`
+          ),
+          latestCustomPanelJS: `${publicRoot}/frontend_latest/custom-panel.js`,
+          es5CustomPanelJS: `${publicRoot}/frontend_es5/custom-panel.js`,
+        }
+      );
+      fs.outputFileSync(resolve(outputRoot, page), content);
+    }
+  };
 
-  fs.outputFileSync(path.resolve(config.demo_root, "index.html"), content);
-  done();
-});
+// Same as previous but for production builds
+// (includes minification and hashed file names from manifest)
+const genPagesProdTask =
+  (
+    pageEntries,
+    inputRoot,
+    outputRoot,
+    outputLatest,
+    outputES5,
+    inputSub = "src/html"
+  ) =>
+  async () => {
+    const latestManifest = fs.readJsonSync(
+      resolve(outputLatest, "manifest.json")
+    );
+    const es5Manifest = outputES5
+      ? fs.readJsonSync(resolve(outputES5, "manifest.json"))
+      : {};
+    const commonVars = getCommonTemplateVars();
+    const minifiedHTML = [];
+    for (const [page, entries] of Object.entries(pageEntries)) {
+      const content = renderTemplate(
+        resolve(inputRoot, inputSub, `${page}.template`),
+        {
+          ...commonVars,
+          latestEntryJS: entries.map((entry) => latestManifest[`${entry}.js`]),
+          es5EntryJS: entries.map((entry) => es5Manifest[`${entry}.js`]),
+          latestCustomPanelJS: latestManifest["custom-panel.js"],
+          es5CustomPanelJS: es5Manifest["custom-panel.js"],
+        }
+      );
+      minifiedHTML.push(
+        minifyHtml(content, extname(page)).then((minified) =>
+          fs.outputFileSync(resolve(outputRoot, page), minified)
+        )
+      );
+    }
+    await Promise.all(minifiedHTML);
+  };
 
-gulp.task("gen-index-demo-dev", (done) => {
-  // In dev mode we don't mangle names, so we hardcode urls. That way we can
-  // run webpack as last in watch mode, which blocks output.
-  const content = renderDemoTemplate("index", {
-    latestDemoJS: "/frontend_latest/main.js",
+// Map HTML pages to their required entrypoints
+const APP_PAGE_ENTRIES = {
+  "authorize.html": ["authorize"],
+  "onboarding.html": ["onboarding"],
+  "index.html": ["core", "app"],
+};
 
-    es5Compatibility: "/frontend_es5/compatibility.js",
-    es5DemoJS: "/frontend_es5/main.js",
-  });
+gulp.task(
+  "gen-pages-app-dev",
+  genPagesDevTask(APP_PAGE_ENTRIES, paths.polymer_dir, paths.app_output_root)
+);
 
-  fs.outputFileSync(path.resolve(config.demo_root, "index.html"), content);
-  done();
-});
+gulp.task(
+  "gen-pages-app-prod",
+  genPagesProdTask(
+    APP_PAGE_ENTRIES,
+    paths.polymer_dir,
+    paths.app_output_root,
+    paths.app_output_latest,
+    paths.app_output_es5
+  )
+);
 
-gulp.task("gen-index-demo-prod", (done) => {
-  const latestManifest = require(path.resolve(
-    config.demo_output,
-    "manifest.json"
-  ));
-  const es5Manifest = require(path.resolve(
-    config.demo_output_es5,
-    "manifest.json"
-  ));
-  const content = renderDemoTemplate("index", {
-    latestDemoJS: latestManifest["main.js"],
+const CAST_PAGE_ENTRIES = {
+  "faq.html": ["launcher"],
+  "index.html": ["launcher"],
+  "media.html": ["media"],
+  "receiver.html": ["receiver"],
+};
 
-    es5Compatibility: es5Manifest["compatibility.js"],
-    es5DemoJS: es5Manifest["main.js"],
-  });
-  const minified = minifyHtml(content).replace(/#THEMEC/g, "{{ theme_color }}");
+gulp.task(
+  "gen-pages-cast-dev",
+  genPagesDevTask(CAST_PAGE_ENTRIES, paths.cast_dir, paths.cast_output_root)
+);
 
-  fs.outputFileSync(path.resolve(config.demo_root, "index.html"), minified);
-  done();
-});
+gulp.task(
+  "gen-pages-cast-prod",
+  genPagesProdTask(
+    CAST_PAGE_ENTRIES,
+    paths.cast_dir,
+    paths.cast_output_root,
+    paths.cast_output_latest,
+    paths.cast_output_es5
+  )
+);
+
+const DEMO_PAGE_ENTRIES = { "index.html": ["main"] };
+
+gulp.task(
+  "gen-pages-demo-dev",
+  genPagesDevTask(DEMO_PAGE_ENTRIES, paths.demo_dir, paths.demo_output_root)
+);
+
+gulp.task(
+  "gen-pages-demo-prod",
+  genPagesProdTask(
+    DEMO_PAGE_ENTRIES,
+    paths.demo_dir,
+    paths.demo_output_root,
+    paths.demo_output_latest,
+    paths.demo_output_es5
+  )
+);
+
+const GALLERY_PAGE_ENTRIES = { "index.html": ["entrypoint"] };
+
+gulp.task(
+  "gen-pages-gallery-dev",
+  genPagesDevTask(
+    GALLERY_PAGE_ENTRIES,
+    paths.gallery_dir,
+    paths.gallery_output_root
+  )
+);
+
+gulp.task(
+  "gen-pages-gallery-prod",
+  genPagesProdTask(
+    GALLERY_PAGE_ENTRIES,
+    paths.gallery_dir,
+    paths.gallery_output_root,
+    paths.gallery_output_latest
+  )
+);
+
+const LANDING_PAGE_PAGE_ENTRIES = { "index.html": ["entrypoint"] };
+
+gulp.task(
+  "gen-pages-landing-page-dev",
+  genPagesDevTask(
+    LANDING_PAGE_PAGE_ENTRIES,
+    paths.landingPage_dir,
+    paths.landingPage_output_root
+  )
+);
+
+gulp.task(
+  "gen-pages-landing-page-prod",
+  genPagesProdTask(
+    LANDING_PAGE_PAGE_ENTRIES,
+    paths.landingPage_dir,
+    paths.landingPage_output_root,
+    paths.landingPage_output_latest,
+    paths.landingPage_output_es5
+  )
+);
+
+const HASSIO_PAGE_ENTRIES = { "entrypoint.js": ["entrypoint"] };
+
+gulp.task(
+  "gen-pages-hassio-dev",
+  genPagesDevTask(
+    HASSIO_PAGE_ENTRIES,
+    paths.hassio_dir,
+    paths.hassio_output_root,
+    "src",
+    paths.hassio_publicPath
+  )
+);
+
+gulp.task(
+  "gen-pages-hassio-prod",
+  genPagesProdTask(
+    HASSIO_PAGE_ENTRIES,
+    paths.hassio_dir,
+    paths.hassio_output_root,
+    paths.hassio_output_latest,
+    paths.hassio_output_es5,
+    "src"
+  )
+);

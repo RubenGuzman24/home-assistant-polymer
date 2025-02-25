@@ -1,41 +1,12 @@
-export const UNAVAILABLE = "unavailable";
+import { arrayLiteralIncludes } from "../common/array/literal-includes";
 
-export const ENTITY_COMPONENT_DOMAINS = [
-  "air_quality",
-  "alarm_control_panel",
-  "automation",
-  "binary_sensor",
-  "calendar",
-  "counter",
-  "cover",
-  "dominos",
-  "fan",
-  "geo_location",
-  "group",
-  "history_graph",
-  "image_processing",
-  "input_boolean",
-  "input_datetime",
-  "input_number",
-  "input_select",
-  "input_text",
-  "light",
-  "lock",
-  "mailbox",
-  "media_player",
-  "person",
-  "plant",
-  "remember_the_milk",
-  "remote",
-  "scene",
-  "script",
-  "sensor",
-  "switch",
-  "timer",
-  "utility_meter",
-  "vacuum",
-  "weather",
-  "wink",
-  "zha",
-  "zwave",
-];
+export const UNAVAILABLE = "unavailable";
+export const UNKNOWN = "unknown";
+export const ON = "on";
+export const OFF = "off";
+
+export const UNAVAILABLE_STATES = [UNAVAILABLE, UNKNOWN] as const;
+export const OFF_STATES = [UNAVAILABLE, UNKNOWN, OFF] as const;
+
+export const isUnavailableState = arrayLiteralIncludes(UNAVAILABLE_STATES);
+export const isOffState = arrayLiteralIncludes(OFF_STATES);

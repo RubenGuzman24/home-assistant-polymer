@@ -1,13 +1,11 @@
-// Run HA develop mode
-const gulp = require("gulp");
-
-require("./clean.js");
-require("./translations.js");
-require("./gen-icons.js");
-require("./gather-static.js");
-require("./webpack.js");
-require("./service-worker.js");
-require("./entry-html.js");
+import gulp from "gulp";
+import "./clean.js";
+import "./entry-html.js";
+import "./gather-static.js";
+import "./gen-icons-json.js";
+import "./service-worker.js";
+import "./translations.js";
+import "./rspack.js";
 
 gulp.task(
   "develop-demo",
@@ -16,14 +14,15 @@ gulp.task(
       process.env.NODE_ENV = "development";
     },
     "clean-demo",
+    "translations-enable-merge-backend",
     gulp.parallel(
-      "gen-icons",
-      "gen-icons-demo",
-      "gen-index-demo-dev",
-      "build-translations"
+      "gen-icons-json",
+      "gen-pages-demo-dev",
+      "build-translations",
+      "build-locale-data"
     ),
     "copy-static-demo",
-    "webpack-dev-server-demo"
+    "rspack-dev-server-demo"
   )
 );
 
@@ -34,9 +33,22 @@ gulp.task(
       process.env.NODE_ENV = "production";
     },
     "clean-demo",
-    gulp.parallel("gen-icons", "gen-icons-demo", "build-translations"),
+    // Cast needs to be backwards compatible and older HA has no translations
+    "translations-enable-merge-backend",
+    gulp.parallel("gen-icons-json", "build-translations", "build-locale-data"),
     "copy-static-demo",
-    "webpack-prod-demo",
-    "gen-index-demo-prod"
+    "rspack-prod-demo",
+    "gen-pages-demo-prod"
+  )
+);
+
+gulp.task(
+  "analyze-demo",
+  gulp.series(
+    async function setEnv() {
+      process.env.STATS = "1";
+    },
+    "clean",
+    "rspack-prod-demo"
   )
 );

@@ -1,26 +1,38 @@
-import { HomeAssistantAppEl } from "../../src/layouts/home-assistant";
-import {
-  provideHass,
-  MockHomeAssistant,
-} from "../../src/fake_data/provide_hass";
+// Compat needs to be first import
+import "../../src/resources/compatibility";
+import { customElement } from "lit/decorators";
+import { isNavigationClick } from "../../src/common/dom/is-navigation-click";
 import { navigate } from "../../src/common/navigate";
-import { mockLovelace } from "./stubs/lovelace";
-import { mockAuth } from "./stubs/auth";
+import type { MockHomeAssistant } from "../../src/fake_data/provide_hass";
+import { provideHass } from "../../src/fake_data/provide_hass";
+import { HomeAssistantAppEl } from "../../src/layouts/home-assistant";
+import type { HomeAssistant } from "../../src/types";
 import { selectedDemoConfig } from "./configs/demo-configs";
-import { mockTranslations } from "./stubs/translations";
+import { mockAreaRegistry } from "./stubs/area_registry";
+import { mockAuth } from "./stubs/auth";
+import { mockConfigEntries } from "./stubs/config_entries";
+import { mockEnergy } from "./stubs/energy";
+import { energyEntities } from "./stubs/entities";
+import { mockEntityRegistry } from "./stubs/entity_registry";
+import { mockEvents } from "./stubs/events";
+import { mockFrontend } from "./stubs/frontend";
+import { mockIcons } from "./stubs/icons";
 import { mockHistory } from "./stubs/history";
-import { mockShoppingList } from "./stubs/shopping_list";
+import { mockLovelace } from "./stubs/lovelace";
+import { mockMediaPlayer } from "./stubs/media_player";
+import { mockPersistentNotification } from "./stubs/persistent_notification";
+import { mockRecorder } from "./stubs/recorder";
+import { mockSensor } from "./stubs/sensor";
 import { mockSystemLog } from "./stubs/system_log";
 import { mockTemplate } from "./stubs/template";
-import { mockEvents } from "./stubs/events";
-import { mockMediaPlayer } from "./stubs/media_player";
-import { HomeAssistant } from "../../src/types";
-import { mockFrontend } from "./stubs/frontend";
+import { mockTodo } from "./stubs/todo";
+import { mockTranslations } from "./stubs/translations";
 
-class HaDemo extends HomeAssistantAppEl {
-  protected async _initialize() {
+@customElement("ha-demo")
+export class HaDemo extends HomeAssistantAppEl {
+  protected async _initializeHass() {
     const initial: Partial<MockHomeAssistant> = {
-      panelUrl: (this as any).panelUrl,
+      panelUrl: (this as any)._panelUrl,
       // Override updateHass so that the correct hass lifecycle methods are called
       updateHass: (hassUpdate: Partial<HomeAssistant>) =>
         this._updateHass(hassUpdate),
@@ -37,12 +49,65 @@ class HaDemo extends HomeAssistantAppEl {
     mockAuth(hass);
     mockTranslations(hass);
     mockHistory(hass);
-    mockShoppingList(hass);
+    mockRecorder(hass);
+    mockTodo(hass);
+    mockSensor(hass);
     mockSystemLog(hass);
     mockTemplate(hass);
     mockEvents(hass);
     mockMediaPlayer(hass);
     mockFrontend(hass);
+    mockIcons(hass);
+    mockEnergy(hass);
+    mockPersistentNotification(hass);
+    mockConfigEntries(hass);
+    mockAreaRegistry(hass);
+    mockEntityRegistry(hass, [
+      {
+        config_entry_id: "co2signal",
+        config_subentry_id: null,
+        device_id: "co2signal",
+        area_id: null,
+        disabled_by: null,
+        entity_id: "sensor.co2_intensity",
+        id: "sensor.co2_intensity",
+        name: null,
+        icon: null,
+        labels: [],
+        categories: {},
+        platform: "co2signal",
+        hidden_by: null,
+        entity_category: null,
+        has_entity_name: false,
+        unique_id: "co2_intensity",
+        options: null,
+        created_at: 0,
+        modified_at: 0,
+      },
+      {
+        config_entry_id: "co2signal",
+        config_subentry_id: null,
+        device_id: "co2signal",
+        area_id: null,
+        disabled_by: null,
+        entity_id: "sensor.grid_fossil_fuel_percentage",
+        id: "sensor.co2_intensity",
+        name: null,
+        icon: null,
+        labels: [],
+        categories: {},
+        platform: "co2signal",
+        hidden_by: null,
+        entity_category: null,
+        has_entity_name: false,
+        unique_id: "grid_fossil_fuel_percentage",
+        options: null,
+        created_at: 0,
+        modified_at: 0,
+      },
+    ]);
+
+    hass.addEntities(energyEntities());
 
     // Once config is loaded AND localize, set entities and apply theme.
     Promise.all([selectedDemoConfig, localizePromise]).then(
@@ -58,49 +123,14 @@ class HaDemo extends HomeAssistantAppEl {
     document.body.addEventListener(
       "click",
       (e) => {
-        if (
-          e.defaultPrevented ||
-          e.button !== 0 ||
-          e.metaKey ||
-          e.ctrlKey ||
-          e.shiftKey
-        ) {
-          return;
-        }
+        const href = isNavigationClick(e);
 
-        const anchor = e
-          .composedPath()
-          .filter((n) => (n as HTMLElement).tagName === "A")[0] as
-          | HTMLAnchorElement
-          | undefined;
-        if (
-          !anchor ||
-          anchor.target ||
-          anchor.hasAttribute("download") ||
-          anchor.getAttribute("rel") === "external"
-        ) {
-          return;
-        }
-
-        let href = anchor.href;
-        if (!href || href.indexOf("mailto:") !== -1) {
-          return;
-        }
-
-        const location = window.location;
-        const origin =
-          location.origin || location.protocol + "//" + location.host;
-        if (href.indexOf(origin) !== 0) {
-          return;
-        }
-        href = href.substr(origin.length);
-
-        if (href === "#") {
+        if (!href) {
           return;
         }
 
         e.preventDefault();
-        navigate(this as any, href);
+        navigate(href);
       },
       { capture: true }
     );
@@ -109,4 +139,8 @@ class HaDemo extends HomeAssistantAppEl {
   }
 }
 
-customElements.define("ha-demo", HaDemo);
+declare global {
+  interface HTMLElementTagNameMap {
+    "ha-demo": HaDemo;
+  }
+}

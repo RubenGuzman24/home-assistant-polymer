@@ -1,29 +1,47 @@
-import { property, PropertyValues, UpdatingElement } from "lit-element";
-import { loadCustomPanel } from "../../util/custom-panel/load-custom-panel";
-import { createCustomPanelElement } from "../../util/custom-panel/create-custom-panel-element";
-import { setCustomPanelProperties } from "../../util/custom-panel/set-custom-panel-properties";
-import { HomeAssistant, Route } from "../../types";
-import { CustomPanelInfo } from "../../data/panel_custom";
+import type { PropertyValues } from "lit";
+import { ReactiveElement } from "lit";
+import { property } from "lit/decorators";
+import type { NavigateOptions } from "../../common/navigate";
 import { navigate } from "../../common/navigate";
+import { deepEqual } from "../../common/util/deep-equal";
+import type { CustomPanelInfo } from "../../data/panel_custom";
+import type { HomeAssistant, Route } from "../../types";
+import { createCustomPanelElement } from "../../util/custom-panel/create-custom-panel-element";
+import {
+  getUrl,
+  loadCustomPanel,
+} from "../../util/custom-panel/load-custom-panel";
+import { setCustomPanelProperties } from "../../util/custom-panel/set-custom-panel-properties";
 
 declare global {
+  interface HTMLElementTagNameMap {
+    "ha-panel-custom": HaPanelCustom;
+  }
   interface Window {
     customPanel: HaPanelCustom | undefined;
   }
 }
 
-export class HaPanelCustom extends UpdatingElement {
-  @property() public hass!: HomeAssistant;
-  @property() public narrow!: boolean;
-  @property() public route!: Route;
-  @property() public panel!: CustomPanelInfo;
-  private _setProperties?: (props: {}) => void | undefined;
+export class HaPanelCustom extends ReactiveElement {
+  @property({ attribute: false }) public hass!: HomeAssistant;
+
+  @property({ type: Boolean }) public narrow = false;
+
+  @property({ attribute: false }) public route!: Route;
+
+  @property({ attribute: false }) public panel!: CustomPanelInfo;
+
+  private _setProperties?: (props: Record<string, unknown>) => void;
+
+  protected createRenderRoot() {
+    return this;
+  }
 
   // Since navigate fires events on `window`, we need to expose this as a function
   // to allow custom panels to forward their location changes to the main window
   // instead of their iframe window.
-  public navigate = (path: string, replace?: boolean) =>
-    navigate(this, path, replace);
+  public navigate = (path: string, options?: NavigateOptions) =>
+    navigate(path, options);
 
   public registerIframe(initialize, setProperties) {
     initialize(this.panel, {
@@ -39,19 +57,24 @@ export class HaPanelCustom extends UpdatingElement {
     this._cleanupPanel();
   }
 
-  protected updated(changedProps: PropertyValues) {
+  protected update(changedProps: PropertyValues) {
+    super.update(changedProps);
     if (changedProps.has("panel")) {
-      // Clean up old things if we had a panel
-      if (changedProps.get("panel")) {
-        this._cleanupPanel();
+      // Clean up old things if we had a panel and the new one is different.
+      const oldPanel = changedProps.get("panel") as CustomPanelInfo | undefined;
+      if (!deepEqual(oldPanel, this.panel)) {
+        if (oldPanel) {
+          this._cleanupPanel();
+        }
+        this._createPanel(this.panel);
+        return;
       }
-      this._createPanel(this.panel);
-      return;
     }
     if (!this._setProperties) {
       return;
     }
     const props = {};
+    // @ts-ignore
     for (const key of changedProps.keys()) {
       props[key] = this[key];
     }
@@ -68,22 +91,30 @@ export class HaPanelCustom extends UpdatingElement {
 
   private _createPanel(panel: CustomPanelInfo) {
     const config = panel.config!._panel_custom;
+    const panelUrl = getUrl(config);
 
     const tempA = document.createElement("a");
-    tempA.href = config.html_url || config.js_url || config.module_url || "";
+    tempA.href = panelUrl.url;
 
     if (
       !config.trust_external &&
       !["localhost", "127.0.0.1", location.hostname].includes(tempA.hostname)
     ) {
       if (
-        !confirm(`Do you trust the external panel "${config.name}" at "${
-          tempA.href
-        }"?
+        !confirm(
+          `${this.hass.localize(
+            "ui.panel.custom.external_panel.question_trust",
+            { name: config.name, link: tempA.href }
+          )}
 
-It will have access to all data in Home Assistant.
+           ${this.hass.localize(
+             "ui.panel.custom.external_panel.complete_access"
+           )}
 
-(Check docs for the panel_custom component to hide this message)`)
+           (${this.hass.localize(
+             "ui.panel.custom.external_panel.hide_message"
+           )})`
+        )
       ) {
         return;
       }
@@ -111,17 +142,18 @@ It will have access to all data in Home Assistant.
     }
 
     window.customPanel = this;
+    const titleAttr = this.panel.title ? `title="${this.panel.title}"` : "";
     this.innerHTML = `
-    <style>
-      iframe {
-        border: 0;
-        width: 100%;
-        height: 100%;
-        display: block;
-      }
-    </style>
-    <iframe></iframe>
-    `.trim();
+      <style>
+        iframe {
+          border: 0;
+          width: 100%;
+          height: 100%;
+          display: block;
+          background-color: var(--primary-background-color);
+        }
+      </style>
+      <iframe ${titleAttr}></iframe>`.trim();
     const iframeDoc = this.querySelector("iframe")!.contentWindow!.document;
     iframeDoc.open();
     iframeDoc.write(

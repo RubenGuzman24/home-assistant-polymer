@@ -1,4 +1,4 @@
-import { Panels } from "../types";
+import type { Panels } from "../types";
 
 export const demoPanels: Panels = {
   lovelace: {
@@ -14,13 +14,6 @@ export const demoPanels: Panels = {
     title: null,
     config: null,
     url_path: "dev-state",
-  },
-  states: {
-    component_name: "states",
-    icon: null,
-    title: null,
-    config: null,
-    url_path: "states",
   },
   "dev-event": {
     component_name: "dev-event",
@@ -42,13 +35,6 @@ export const demoPanels: Panels = {
     title: null,
     config: null,
     url_path: "profile",
-  },
-  kiosk: {
-    component_name: "kiosk",
-    icon: null,
-    title: null,
-    config: null,
-    url_path: "kiosk",
   },
   "dev-info": {
     component_name: "dev-info",
@@ -80,15 +66,22 @@ export const demoPanels: Panels = {
   //   url_path: "history",
   // },
   map: {
-    component_name: "map",
+    component_name: "lovelace",
     icon: "hass:tooltip-account",
     title: "map",
-    config: null,
+    config: { mode: "storage" },
     url_path: "map",
+  },
+  energy: {
+    component_name: "energy",
+    icon: "hass:lightning-bolt",
+    title: "energy",
+    config: null,
+    url_path: "energy",
   },
   // config: {
   //   component_name: "config",
-  //   icon: "hass:settings",
+  //   icon: "hass:cog",
   //   title: "config",
   //   config: null,
   //   url_path: "config",

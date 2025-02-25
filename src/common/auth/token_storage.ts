@@ -1,6 +1,5 @@
-import { AuthData } from "home-assistant-js-websocket";
-
-const storage = window.localStorage || {};
+import type { AuthData } from "home-assistant-js-websocket";
+import { extractSearchParam } from "../url/search-params";
 
 declare global {
   interface Window {
@@ -30,11 +29,22 @@ export function askWrite() {
 
 export function saveTokens(tokens: AuthData | null) {
   tokenCache.tokens = tokens;
+
+  if (!tokenCache.writeEnabled && extractSearchParam("storeToken") === "true") {
+    tokenCache.writeEnabled = true;
+  }
+
   if (tokenCache.writeEnabled) {
     try {
-      storage.hassTokens = JSON.stringify(tokens);
-    } catch (err) {
+      window.localStorage.setItem("hassTokens", JSON.stringify(tokens));
+    } catch (err: any) {
       // write failed, ignore it. Happens if storage is full or private mode.
+      // eslint-disable-next-line no-console
+      console.warn(
+        "Failed to store tokens; Are you in private mode or is your storage full?"
+      );
+      // eslint-disable-next-line no-console
+      console.error("Error storing tokens:", err);
     }
   }
 }
@@ -49,16 +59,14 @@ export function enableWrite() {
 export function loadTokens() {
   if (tokenCache.tokens === undefined) {
     try {
-      // Delete the old token cache.
-      delete storage.tokens;
-      const tokens = storage.hassTokens;
+      const tokens = window.localStorage.getItem("hassTokens");
       if (tokens) {
         tokenCache.tokens = JSON.parse(tokens);
         tokenCache.writeEnabled = true;
       } else {
         tokenCache.tokens = null;
       }
-    } catch (err) {
+    } catch (_err: any) {
       tokenCache.tokens = null;
     }
   }

@@ -1,73 +1,84 @@
-import {
-  css,
-  CSSResult,
-  html,
-  LitElement,
-  property,
-  TemplateResult,
-} from "lit-element";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property } from "lit/decorators";
 
-class HaCard extends LitElement {
+@customElement("ha-card")
+export class HaCard extends LitElement {
   @property() public header?: string;
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        background: var(
-          --ha-card-background,
-          var(--paper-card-background-color, white)
-        );
-        border-radius: var(--ha-card-border-radius, 2px);
-        box-shadow: var(
-          --ha-card-box-shadow,
-          0 2px 2px 0 rgba(0, 0, 0, 0.14),
-          0 1px 5px 0 rgba(0, 0, 0, 0.12),
-          0 3px 1px -2px rgba(0, 0, 0, 0.2)
-        );
-        color: var(--primary-text-color);
-        display: block;
-        transition: all 0.3s ease-out;
-        position: relative;
-      }
+  @property({ type: Boolean, reflect: true }) public raised = false;
 
-      .card-header,
-      :host ::slotted(.card-header) {
-        color: var(--ha-card-header-color, --primary-text-color);
-        font-family: var(--ha-card-header-font-family, inherit);
-        font-size: var(--ha-card-header-font-size, 24px);
-        letter-spacing: -0.012em;
-        line-height: 32px;
-        padding: 24px 16px 16px;
-        display: block;
-      }
+  static styles = css`
+    :host {
+      background: var(
+        --ha-card-background,
+        var(--card-background-color, white)
+      );
+      -webkit-backdrop-filter: var(--ha-card-backdrop-filter, none);
+      backdrop-filter: var(--ha-card-backdrop-filter, none);
+      box-shadow: var(--ha-card-box-shadow, none);
+      box-sizing: border-box;
+      border-radius: var(--ha-card-border-radius, 12px);
+      border-width: var(--ha-card-border-width, 1px);
+      border-style: solid;
+      border-color: var(--ha-card-border-color, var(--divider-color, #e0e0e0));
+      color: var(--primary-text-color);
+      display: block;
+      transition: all 0.3s ease-out;
+      position: relative;
+    }
 
-      :host ::slotted(.card-content:not(:first-child)),
-      slot:not(:first-child)::slotted(.card-content) {
-        padding-top: 0px;
-        margin-top: -8px;
-      }
+    :host([raised]) {
+      border: none;
+      box-shadow: var(
+        --ha-card-box-shadow,
+        0px 2px 1px -1px rgba(0, 0, 0, 0.2),
+        0px 1px 1px 0px rgba(0, 0, 0, 0.14),
+        0px 1px 3px 0px rgba(0, 0, 0, 0.12)
+      );
+    }
 
-      :host ::slotted(.card-content) {
-        padding: 16px;
-      }
+    .card-header,
+    :host ::slotted(.card-header) {
+      color: var(--ha-card-header-color, var(--primary-text-color));
+      font-family: var(--ha-card-header-font-family, inherit);
+      font-size: var(--ha-card-header-font-size, 24px);
+      letter-spacing: -0.012em;
+      line-height: 48px;
+      padding: 12px 16px 16px;
+      display: block;
+      margin-block-start: 0px;
+      margin-block-end: 0px;
+      font-weight: normal;
+    }
 
-      :host ::slotted(.card-actions) {
-        border-top: 1px solid #e8e8e8;
-        padding: 5px 16px;
-      }
-    `;
-  }
+    :host ::slotted(.card-content:not(:first-child)),
+    slot:not(:first-child)::slotted(.card-content) {
+      padding-top: 0px;
+      margin-top: -8px;
+    }
 
-  protected render(): TemplateResult {
+    :host ::slotted(.card-content) {
+      padding: 16px;
+    }
+
+    :host ::slotted(.card-actions) {
+      border-top: 1px solid var(--divider-color, #e8e8e8);
+      padding: 5px 16px;
+    }
+  `;
+
+  protected render() {
     return html`
       ${this.header
-        ? html`
-            <div class="card-header">${this.header}</div>
-          `
-        : html``}
+        ? html`<h1 class="card-header">${this.header}</h1>`
+        : nothing}
       <slot></slot>
     `;
   }
 }
 
-customElements.define("ha-card", HaCard);
+declare global {
+  interface HTMLElementTagNameMap {
+    "ha-card": HaCard;
+  }
+}

@@ -1,41 +1,32 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  CSSResult,
-  css,
-  customElement,
-  property,
-} from "lit-element";
-
+import "@material/mwc-button/mwc-button";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property } from "lit/decorators";
 import "../../../components/ha-card";
-
-import { LovelaceCard } from "../types";
-import { HomeAssistant } from "../../../types";
-import { EmptyStateCardConfig } from "./types";
+import type { HomeAssistant } from "../../../types";
+import type { LovelaceCard } from "../types";
+import type { EmptyStateCardConfig } from "./types";
 
 @customElement("hui-empty-state-card")
 export class HuiEmptyStateCard extends LitElement implements LovelaceCard {
-  @property() public hass?: HomeAssistant;
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
   public getCardSize(): number {
     return 2;
   }
 
-  public setConfig(_config: EmptyStateCardConfig): void {
-    // tslint:disable-next-line
-  }
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  public setConfig(_config: EmptyStateCardConfig): void {}
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this.hass) {
-      return html``;
+      return nothing;
     }
 
     return html`
       <ha-card
-        .header="${this.hass.localize(
+        .header=${this.hass.localize(
           "ui.panel.lovelace.cards.empty_state.title"
-        )}"
+        )}
       >
         <div class="card-content">
           ${this.hass.localize(
@@ -43,7 +34,7 @@ export class HuiEmptyStateCard extends LitElement implements LovelaceCard {
           )}
         </div>
         <div class="card-actions">
-          <a href="/config/integrations">
+          <a href="/config/integrations/dashboard">
             <mwc-button>
               ${this.hass.localize(
                 "ui.panel.lovelace.cards.empty_state.go_to_integrations_page"
@@ -51,26 +42,26 @@ export class HuiEmptyStateCard extends LitElement implements LovelaceCard {
             </mwc-button>
           </a>
         </div>
-      </header-card>
+      </ha-card>
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      .content {
-        margin-top: -1em;
-        padding: 16px;
-      }
+  static styles = css`
+    .content {
+      margin-top: -1em;
+      padding: 16px;
+    }
 
-      .card-actions a {
-        text-decoration: none;
-      }
+    .card-actions a {
+      text-decoration: none;
+    }
 
-      mwc-button {
-        margin-left: -8px;
-      }
-    `;
-  }
+    mwc-button {
+      margin-left: -8px;
+      margin-inline-start: -8px;
+      margin-inline-end: initial;
+    }
+  `;
 }
 
 declare global {

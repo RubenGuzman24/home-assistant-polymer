@@ -1,28 +1,28 @@
-import "@polymer/paper-icon-button/paper-icon-button";
-import {
-  property,
-  TemplateResult,
-  LitElement,
-  html,
-  customElement,
-  CSSResult,
-  css,
-} from "lit-element";
-
+import { mdiMenu } from "@mdi/js";
+import type { UnsubscribeFunc } from "home-assistant-js-websocket";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
 import { fireEvent } from "../common/dom/fire_event";
-import { HomeAssistant } from "../types";
-import { UnsubscribeFunc } from "home-assistant-js-websocket";
 import { subscribeNotifications } from "../data/persistent_notification";
-import computeDomain from "../common/entity/compute_domain";
+import type { HomeAssistant } from "../types";
+import "./ha-icon-button";
 
 @customElement("ha-menu-button")
 class HaMenuButton extends LitElement {
   @property({ type: Boolean }) public hassio = false;
-  @property() public narrow!: boolean;
-  @property() public hass!: HomeAssistant;
-  @property() private _hasNotifications = false;
+
+  @property({ type: Boolean }) public narrow = false;
+
+  @property({ attribute: false }) public hass!: HomeAssistant;
+
+  @state() private _hasNotifications = false;
+
+  @state() private _show = false;
+
   private _alwaysVisible = false;
+
   private _attachNotifOnConnect = false;
+
   private _unsubNotifications?: UnsubscribeFunc;
 
   public connectedCallback() {
@@ -42,24 +42,20 @@ class HaMenuButton extends LitElement {
     }
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
+    if (!this._show) {
+      return nothing;
+    }
     const hasNotifications =
-      this.narrow &&
-      (this._hasNotifications ||
-        Object.keys(this.hass.states).some(
-          (entityId) => computeDomain(entityId) === "configurator"
-        ));
+      this._hasNotifications &&
+      (this.narrow || this.hass.dockedSidebar === "always_hidden");
     return html`
-      <paper-icon-button
-        aria-label="Sidebar Toggle"
-        .icon=${this.hassio ? "hassio:menu" : "hass:menu"}
+      <ha-icon-button
+        .label=${this.hass.localize("ui.sidebar.sidebar_toggle")}
+        .path=${mdiMenu}
         @click=${this._toggleMenu}
-      ></paper-icon-button>
-      ${hasNotifications
-        ? html`
-            <div class="dot"></div>
-          `
-        : ""}
+      ></ha-icon-button>
+      ${hasNotifications ? html`<div class="dot"></div>` : ""}
     `;
   }
 
@@ -75,29 +71,32 @@ class HaMenuButton extends LitElement {
       (Number((window.parent as any).frontendVersion) || 0) < 20190710;
   }
 
-  protected updated(changedProps) {
-    super.updated(changedProps);
+  protected willUpdate(changedProps) {
+    super.willUpdate(changedProps);
 
     if (!changedProps.has("narrow") && !changedProps.has("hass")) {
       return;
     }
 
-    const oldHass = changedProps.get("hass") as HomeAssistant | undefined;
-    const oldNarrow =
-      changedProps.get("narrow") ||
-      (oldHass && oldHass.dockedSidebar === "always_hidden");
-    const newNarrow =
+    const oldHass = changedProps.has("hass")
+      ? (changedProps.get("hass") as HomeAssistant | undefined)
+      : this.hass;
+    const oldNarrow = changedProps.has("narrow")
+      ? (changedProps.get("narrow") as boolean | undefined)
+      : this.narrow;
+
+    const oldShowButton =
+      oldNarrow || oldHass?.dockedSidebar === "always_hidden";
+    const showButton =
       this.narrow || this.hass.dockedSidebar === "always_hidden";
 
-    if (oldNarrow === newNarrow) {
+    if (this.hasUpdated && oldShowButton === showButton) {
       return;
     }
 
-    this.style.visibility =
-      newNarrow || this._alwaysVisible ? "initial" : "hidden";
+    this._show = showButton || this._alwaysVisible;
 
-    if (!newNarrow) {
-      this._hasNotifications = false;
+    if (!showButton) {
       if (this._unsubNotifications) {
         this._unsubNotifications();
         this._unsubNotifications = undefined;
@@ -109,6 +108,9 @@ class HaMenuButton extends LitElement {
   }
 
   private _subscribeNotifications() {
+    if (this._unsubNotifications) {
+      throw new Error("Already subscribed");
+    }
     this._unsubNotifications = subscribeNotifications(
       this.hass.connection,
       (notifications) => {
@@ -121,22 +123,24 @@ class HaMenuButton extends LitElement {
     fireEvent(this, "hass-toggle-menu");
   }
 
-  static get styles(): CSSResult {
-    return css`
-      :host {
-        position: relative;
-      }
-      .dot {
-        position: absolute;
-        background-color: var(--accent-color);
-        width: 12px;
-        height: 12px;
-        top: 8px;
-        right: 5px;
-        border-radius: 50%;
-      }
-    `;
-  }
+  static styles = css`
+    :host {
+      position: relative;
+    }
+    .dot {
+      pointer-events: none;
+      position: absolute;
+      background-color: var(--accent-color);
+      width: 12px;
+      height: 12px;
+      top: 9px;
+      right: 7px;
+      inset-inline-end: 7px;
+      inset-inline-start: initial;
+      border-radius: 50%;
+      border: 2px solid var(--app-header-background-color);
+    }
+  `;
 }
 
 declare global {

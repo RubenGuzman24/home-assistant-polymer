@@ -1,4 +1,5 @@
-import { LitElement, html } from "lit-element";
+/* eslint-disable */
+import { html, LitElement } from "lit";
 
 if (!window.cardTools) {
   const version = 0.2;
@@ -137,7 +138,7 @@ if (!window.cardTools) {
       return cardTools.createThing("row", config);
 
     const domain = config.entity.split(".", 1)[0];
-    Object.assign(config, { type: DEFAULT_ROWS[domain] || "text" });
+    Object.assign(config, { type: DEFAULT_ROWS[domain] || "simple" });
     return cardTools.createThing("entity-row", config);
   };
 
@@ -161,8 +162,8 @@ if (!window.cardTools) {
   };
 
   cardTools.longpress = (element) => {
-    customElements.whenDefined("long-press").then(() => {
-      const longpress = document.body.querySelector("long-press");
+    customElements.whenDefined("action-handler").then(() => {
+      const longpress = document.body.querySelector("action-handler");
       longpress.bind(element);
     });
     return element;

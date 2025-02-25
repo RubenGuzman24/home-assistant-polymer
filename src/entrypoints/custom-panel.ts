@@ -1,11 +1,21 @@
-import { loadJS } from "../common/dom/load_resource";
-import { loadCustomPanel } from "../util/custom-panel/load-custom-panel";
-import { createCustomPanelElement } from "../util/custom-panel/create-custom-panel-element";
-import { setCustomPanelProperties } from "../util/custom-panel/set-custom-panel-properties";
+// Compat needs to be first import
+import "../resources/compatibility";
+
+import type { CSSResult } from "lit";
 import { fireEvent } from "../common/dom/fire_event";
-import { PolymerElement } from "@polymer/polymer";
-import { CustomPanelInfo } from "../data/panel_custom";
+import { isNavigationClick } from "../common/dom/is-navigation-click";
+import { loadJS } from "../common/dom/load_resource";
 import { webComponentsSupported } from "../common/feature-detect/support-web-components";
+import { navigate } from "../common/navigate";
+import type { CustomPanelInfo } from "../data/panel_custom";
+import { baseEntrypointStyles } from "../resources/styles";
+import { createCustomPanelElement } from "../util/custom-panel/create-custom-panel-element";
+import { loadCustomPanel } from "../util/custom-panel/load-custom-panel";
+import { setCustomPanelProperties } from "../util/custom-panel/set-custom-panel-properties";
+
+import("@polymer/polymer/lib/utils/settings").then(
+  ({ setCancelSyntheticClickEvents }) => setCancelSyntheticClickEvents(false)
+);
 
 declare global {
   interface Window {
@@ -17,17 +27,14 @@ let es5Loaded: Promise<unknown> | undefined;
 
 window.loadES5Adapter = () => {
   if (!es5Loaded) {
-    es5Loaded = Promise.all([
-      loadJS(
-        `${__STATIC_PATH__}polyfills/custom-elements-es5-adapter.js`
-      ).catch(),
-      import(/* webpackChunkName: "compat" */ "./compatibility"),
-    ]);
+    es5Loaded = loadJS(
+      `${__STATIC_PATH__}polyfills/custom-elements-es5-adapter.js`
+    ).catch(); // Swallow errors as it raises errors on old browsers.
   }
   return es5Loaded;
 };
 
-let panelEl: HTMLElement | PolymerElement | undefined;
+let panelEl: HTMLElement | undefined;
 
 function setProperties(properties) {
   if (!panelEl) {
@@ -36,9 +43,24 @@ function setProperties(properties) {
   setCustomPanelProperties(panelEl, properties);
 }
 
-function initialize(panel: CustomPanelInfo, properties: {}) {
+function initialize(
+  panel: CustomPanelInfo,
+  properties: Record<string, unknown>
+) {
   const style = document.createElement("style");
-  style.innerHTML = "body{margin:0}";
+
+  style.innerHTML = `
+  body {
+    margin:0;
+    background-color: var(--primary-background-color, #fafafa);
+    color: var(--primary-text-color, #212121);
+  }
+  @media (prefers-color-scheme: dark) {
+    body {
+      background-color: var(--primary-background-color, #111111);
+      color: var(--primary-text-color, #e1e1e1);
+    }
+  }`;
   document.head.appendChild(style);
 
   const config = panel.config._panel_custom;
@@ -50,8 +72,7 @@ function initialize(panel: CustomPanelInfo, properties: {}) {
     );
   }
 
-  if (__BUILD__ === "es5") {
-    // Load ES5 adapter. Swallow errors as it raises errors on old browsers.
+  if (__BUILD__ === "legacy") {
     start = start.then(() => window.loadES5Adapter());
   }
 
@@ -74,7 +95,7 @@ function initialize(panel: CustomPanelInfo, properties: {}) {
           if (window.parent.customPanel) {
             window.parent.customPanel.navigate(
               window.location.pathname,
-              ev.detail ? ev.detail.replace : false
+              ev.detail
             );
           }
         });
@@ -82,11 +103,35 @@ function initialize(panel: CustomPanelInfo, properties: {}) {
         document.body.appendChild(panelEl!);
       },
       (err) => {
-        // tslint:disable-next-line
+        // eslint-disable-next-line
         console.error(err, panel);
-        alert(`Unable to load the panel source: ${err}.`);
+        let errorScreen;
+        if (panel.url_path === "hassio") {
+          import("../layouts/supervisor-error-screen");
+          errorScreen = document.createElement(
+            "supervisor-error-screen"
+          ) as any;
+        } else {
+          import("../layouts/hass-error-screen");
+          errorScreen = document.createElement("hass-error-screen") as any;
+          errorScreen.error = `Unable to load the panel source: ${err}.`;
+        }
+
+        const errorStyle = document.createElement("style");
+        errorStyle.innerHTML = (baseEntrypointStyles as CSSResult).cssText;
+        document.body.appendChild(errorStyle);
+
+        errorScreen.hass = properties.hass;
+        document.body.appendChild(errorScreen);
       }
     );
+
+  document.body.addEventListener("click", (ev) => {
+    const href = isNavigationClick(ev);
+    if (href) {
+      navigate(href);
+    }
+  });
 }
 
 document.addEventListener(
@@ -94,3 +139,10 @@ document.addEventListener(
   () => window.parent.customPanel!.registerIframe(initialize, setProperties),
   { once: true }
 );
+
+window.addEventListener("unload", () => {
+  // allow disconnected callback to fire
+  while (document.body.lastChild) {
+    document.body.removeChild(document.body.lastChild);
+  }
+});

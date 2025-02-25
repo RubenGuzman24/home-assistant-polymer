@@ -9,6 +9,9 @@
   "bg": {
     "nativeName": "Български"
   },
+  "bn": {
+    "nativeName": "বাংলা"
+  },
   "bs": {
     "nativeName": "Bosanski"
   },
@@ -33,6 +36,12 @@
   "en": {
     "nativeName": "English"
   },
+  "en-GB": {
+    "nativeName": "English (GB)"
+  },
+  "eo": {
+    "nativeName": "Esperanto"
+  },
   "es": {
     "nativeName": "Español"
   },
@@ -46,13 +55,23 @@
     "nativeName": "Euskara"
   },
   "fa": {
-    "nativeName": "فارسی"
+    "nativeName": "فارسی",
+    "isRTL": true
   },
   "fi": {
     "nativeName": "Suomi"
   },
+  "fy": {
+    "nativeName": "Frysk"
+  },
   "fr": {
     "nativeName": "Français"
+  },
+  "ga": {
+    "nativeName": "Gaeilge"
+  },
+  "gl": {
+    "nativeName": "Galego"
   },
   "gsw": {
     "nativeName": "Schwiizerdütsch"
@@ -70,6 +89,9 @@
   "hu": {
     "nativeName": "Magyar"
   },
+  "hy": {
+    "nativeName": "Հայերեն"
+  },
   "id": {
     "nativeName": "Indonesia"
   },
@@ -82,6 +104,9 @@
   "ja": {
     "nativeName": "日本語"
   },
+  "ka": {
+    "nativeName": "Kartuli"
+  },
   "ko": {
     "nativeName": "한국어"
   },
@@ -93,6 +118,12 @@
   },
   "lv": {
     "nativeName": "Latviešu"
+  },
+  "mk": {
+    "nativeName": "Македонски"
+  },
+  "ml": {
+    "nativeName": "മലയാളം"
   },
   "nl": {
     "nativeName": "Nederlands"
@@ -147,6 +178,10 @@
   },
   "uk": {
     "nativeName": "Українська"
+  },
+  "ur": {
+    "nativeName": "اُردُو",
+    "isRTL": true
   },
   "vi": {
     "nativeName": "Tiếng Việt"

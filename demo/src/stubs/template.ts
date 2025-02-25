@@ -1,4 +1,4 @@
-import { MockHomeAssistant } from "../../../src/fake_data/provide_hass";
+import type { MockHomeAssistant } from "../../../src/fake_data/provide_hass";
 
 export const mockTemplate = (hass: MockHomeAssistant) => {
   hass.mockAPI("template", () =>
@@ -6,4 +6,12 @@ export const mockTemplate = (hass: MockHomeAssistant) => {
       body: { message: "Template dev tool does not work in the demo." },
     })
   );
+  hass.mockWS("render_template", (msg, _hass, onChange) => {
+    onChange!({
+      result: msg.template,
+      listeners: { all: false, domains: [], entities: [], time: false },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    return () => {};
+  });
 };

@@ -1,30 +1,25 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  property,
-  css,
-  CSSResult,
-  customElement,
-  PropertyValues,
-} from "lit-element";
-
-import "../components/hui-generic-entity-row";
-import "../components/hui-warning";
-
-import { HomeAssistant } from "../../../types";
-import { EntityRow, EntityConfig } from "./types";
+import "@material/mwc-button/mwc-button";
+import type { PropertyValues } from "lit";
+import { css, html, LitElement, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { isUnavailableState } from "../../../data/entity";
+import type { HomeAssistant } from "../../../types";
 import { hasConfigOrEntityChanged } from "../common/has-changed";
+import "../components/hui-generic-entity-row";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { ConfirmableRowConfig, LovelaceRow } from "./types";
+import { callProtectedLockService } from "../../../data/lock";
+import { confirmAction } from "../common/confirm-action";
 
 @customElement("hui-lock-entity-row")
-class HuiLockEntityRow extends LitElement implements EntityRow {
-  @property() public hass?: HomeAssistant;
+class HuiLockEntityRow extends LitElement implements LovelaceRow {
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: EntityConfig;
+  @state() private _config?: ConfirmableRowConfig;
 
-  public setConfig(config: EntityConfig): void {
+  public setConfig(config: ConfirmableRowConfig): void {
     if (!config) {
-      throw new Error("Configuration error");
+      throw new Error("Invalid configuration");
     }
     this._config = config;
   }
@@ -33,28 +28,28 @@ class HuiLockEntityRow extends LitElement implements EntityRow {
     return hasConfigOrEntityChanged(this, changedProps);
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
 
     const stateObj = this.hass.states[this._config.entity];
 
     if (!stateObj) {
       return html`
-        <hui-warning
-          >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
-          )}</hui-warning
-        >
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
       `;
     }
 
     return html`
-      <hui-generic-entity-row .hass="${this.hass}" .config="${this._config}">
-        <mwc-button @click="${this._callService}">
+      <hui-generic-entity-row .hass=${this.hass} .config=${this._config}>
+        <mwc-button
+          @click=${this._callService}
+          .disabled=${isUnavailableState(stateObj.state)}
+          class="text-content"
+        >
           ${stateObj.state === "locked"
             ? this.hass!.localize("ui.card.lock.unlock")
             : this.hass!.localize("ui.card.lock.lock")}
@@ -63,22 +58,29 @@ class HuiLockEntityRow extends LitElement implements EntityRow {
     `;
   }
 
-  static get styles(): CSSResult {
-    return css`
-      mwc-button {
-        margin-right: -0.57em;
-      }
-    `;
-  }
+  static styles = css`
+    mwc-button {
+      margin-right: -0.57em;
+      margin-inline-end: -0.57em;
+      margin-inline-start: initial;
+    }
+  `;
 
-  private _callService(ev): void {
+  private async _callService(ev): Promise<void> {
     ev.stopPropagation();
     const stateObj = this.hass!.states[this._config!.entity];
-    this.hass!.callService(
-      "lock",
-      stateObj.state === "locked" ? "unlock" : "lock",
-      { entity_id: stateObj.entity_id }
-    );
+    const action = stateObj.state === "locked" ? "unlock" : "lock";
+    if (
+      !this._config?.confirmation ||
+      (await confirmAction(
+        this,
+        this.hass!,
+        this._config.confirmation,
+        this.hass!.localize(`ui.card.lock.${action}`)
+      ))
+    ) {
+      callProtectedLockService(this, this.hass!, stateObj, action);
+    }
   }
 }
 

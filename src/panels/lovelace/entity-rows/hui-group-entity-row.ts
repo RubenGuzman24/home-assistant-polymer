@@ -1,32 +1,37 @@
-import {
-  html,
-  LitElement,
-  TemplateResult,
-  property,
-  customElement,
-  PropertyValues,
-} from "lit-element";
-
-import "../components/hui-generic-entity-row";
-import "../../../components/entity/ha-entity-toggle";
-import "../components/hui-warning";
-
-import computeStateDisplay from "../../../common/entity/compute_state_display";
-
+import type { PropertyValues } from "lit";
+import { LitElement, html, nothing } from "lit";
+import { customElement, property, state } from "lit/decorators";
 import { DOMAINS_TOGGLE } from "../../../common/const";
-import { HomeAssistant } from "../../../types";
-import { EntityRow, EntityConfig } from "./types";
+import { computeDomain } from "../../../common/entity/compute_domain";
+import "../../../components/entity/ha-entity-toggle";
+import type { HomeAssistant } from "../../../types";
 import { hasConfigOrEntityChanged } from "../common/has-changed";
+import "../components/hui-generic-entity-row";
+import { createEntityNotFoundWarning } from "../components/hui-warning";
+import type { EntityConfig, LovelaceRow } from "./types";
 
 @customElement("hui-group-entity-row")
-class HuiGroupEntityRow extends LitElement implements EntityRow {
-  @property() public hass?: HomeAssistant;
+class HuiGroupEntityRow extends LitElement implements LovelaceRow {
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  @property() private _config?: EntityConfig;
+  @state() private _config?: EntityConfig;
+
+  private _computeCanToggle(hass: HomeAssistant, entityIds: string[]): boolean {
+    return entityIds.some((entityId) => {
+      const domain = computeDomain(entityId);
+      if (domain === "group") {
+        return this._computeCanToggle(
+          hass,
+          this.hass?.states[entityId].attributes.entity_id
+        );
+      }
+      return DOMAINS_TOGGLE.has(domain);
+    });
+  }
 
   public setConfig(config: EntityConfig): void {
     if (!config) {
-      throw new Error("Configuration error");
+      throw new Error("Invalid configuration");
     }
     this._config = config;
   }
@@ -35,51 +40,37 @@ class HuiGroupEntityRow extends LitElement implements EntityRow {
     return hasConfigOrEntityChanged(this, changedProps);
   }
 
-  protected render(): TemplateResult | void {
+  protected render() {
     if (!this._config || !this.hass) {
-      return html``;
+      return nothing;
     }
 
     const stateObj = this.hass.states[this._config.entity];
 
     if (!stateObj) {
       return html`
-        <hui-warning
-          >${this.hass.localize(
-            "ui.panel.lovelace.warning.entity_not_found",
-            "entity",
-            this._config.entity
-          )}</hui-warning
-        >
+        <hui-warning>
+          ${createEntityNotFoundWarning(this.hass, this._config.entity)}
+        </hui-warning>
       `;
     }
 
     return html`
-      <hui-generic-entity-row .hass="${this.hass}" .config="${this._config}">
-        ${this._computeCanToggle(stateObj.attributes.entity_id)
+      <hui-generic-entity-row .hass=${this.hass} .config=${this._config}>
+        ${this._computeCanToggle(this.hass, stateObj.attributes.entity_id)
           ? html`
               <ha-entity-toggle
-                .hass="${this.hass}"
-                .stateObj="${stateObj}"
+                .hass=${this.hass}
+                .stateObj=${stateObj}
               ></ha-entity-toggle>
             `
           : html`
-              <div>
-                ${computeStateDisplay(
-                  this.hass!.localize,
-                  stateObj,
-                  this.hass.language
-                )}
+              <div class="text-content">
+                ${this.hass.formatEntityState(stateObj)}
               </div>
             `}
       </hui-generic-entity-row>
     `;
-  }
-
-  private _computeCanToggle(entityIds): boolean {
-    return entityIds.some((entityId) =>
-      DOMAINS_TOGGLE.has(entityId.split(".", 1)[0])
-    );
   }
 }
 

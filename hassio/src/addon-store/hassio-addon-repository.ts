@@ -1,125 +1,135 @@
-import {
-  css,
-  TemplateResult,
-  html,
-  LitElement,
-  property,
-  CSSResultArray,
-} from "lit-element";
-import "@polymer/paper-card/paper-card";
+import { mdiArrowUpBoldCircle, mdiPuzzle } from "@mdi/js";
+import type { CSSResultGroup, TemplateResult } from "lit";
+import { css, html, LitElement } from "lit";
+import { customElement, property } from "lit/decorators";
 import memoizeOne from "memoize-one";
-
-import "../components/hassio-card-content";
-import { hassioStyle } from "../resources/hassio-style";
-import { HomeAssistant } from "../../../src/types";
-import {
-  HassioAddonInfo,
-  HassioAddonRepository,
-} from "../../../src/data/hassio";
+import { atLeastVersion } from "../../../src/common/config/version";
 import { navigate } from "../../../src/common/navigate";
+import { caseInsensitiveStringCompare } from "../../../src/common/string/compare";
+import "../../../src/components/ha-card";
+import type { HassioAddonRepository } from "../../../src/data/hassio/addon";
+import type { StoreAddon } from "../../../src/data/supervisor/store";
+import type { Supervisor } from "../../../src/data/supervisor/supervisor";
+import type { HomeAssistant } from "../../../src/types";
+import "../components/hassio-card-content";
 import { filterAndSort } from "../components/hassio-filter-addons";
+import { hassioStyle } from "../resources/hassio-style";
 
-class HassioAddonRepositoryEl extends LitElement {
-  @property() public hass!: HomeAssistant;
-  @property() public repo!: HassioAddonRepository;
-  @property() public addons!: HassioAddonInfo[];
+@customElement("hassio-addon-repository")
+export class HassioAddonRepositoryEl extends LitElement {
+  @property({ attribute: false }) public hass!: HomeAssistant;
+
+  @property({ attribute: false }) public supervisor!: Supervisor;
+
+  @property({ attribute: false }) public repo!: HassioAddonRepository;
+
+  @property({ attribute: false }) public addons!: StoreAddon[];
+
   @property() public filter!: string;
 
-  private _getAddons = memoizeOne(
-    (addons: HassioAddonInfo[], filter?: string) => {
-      if (filter) {
-        return filterAndSort(addons, filter);
-      }
-      return addons.sort((a, b) =>
-        a.name.toUpperCase() < b.name.toUpperCase() ? -1 : 1
+  private _getAddons = memoizeOne((addons: StoreAddon[], filter?: string) => {
+    if (filter) {
+      return filterAndSort(addons, filter);
+    }
+    return addons.sort((a, b) =>
+      caseInsensitiveStringCompare(a.name, b.name, this.hass.locale.language)
+    );
+  });
+
+  protected render(): TemplateResult {
+    const repo = this.repo;
+    let _addons = this.addons;
+    if (!this.hass.userData?.showAdvanced) {
+      _addons = _addons.filter(
+        (addon) => !addon.advanced && addon.stage === "stable"
       );
     }
-  );
-
-  protected render(): TemplateResult | void {
-    const repo = this.repo;
-    const addons = this._getAddons(this.addons, this.filter);
+    const addons = this._getAddons(_addons, this.filter);
 
     if (this.filter && addons.length < 1) {
       return html`
-        <div class="card-group">
-          <div class="title">
-            <div class="description">
-              No results found in "${repo.name}"
-            </div>
-          </div>
+        <div class="content">
+          <p class="description">
+            ${this.supervisor.localize("store.no_results_found", {
+              repository: repo.name,
+            })}
+          </p>
         </div>
       `;
     }
     return html`
-      <div class="card-group">
-        <div class="title">
-          ${repo.name}
-          <div class="description">
-            Maintained by ${repo.maintainer}<br />
-            <a class="repo" href=${repo.url} target="_blank">${repo.url}</a>
-          </div>
+      <div class="content">
+        <h1>${repo.name}</h1>
+        <div class="card-group">
+          ${addons.map(
+            (addon) => html`
+              <ha-card
+                outlined
+                .addon=${addon}
+                class=${addon.available ? "" : "not_available"}
+                @click=${this._addonTapped}
+              >
+                <div class="card-content">
+                  <hassio-card-content
+                    .hass=${this.hass}
+                    .title=${addon.name}
+                    .description=${addon.description}
+                    .available=${addon.available}
+                    .icon=${addon.installed && addon.update_available
+                      ? mdiArrowUpBoldCircle
+                      : mdiPuzzle}
+                    .iconTitle=${addon.installed
+                      ? addon.update_available
+                        ? this.supervisor.localize(
+                            "common.new_version_available"
+                          )
+                        : this.supervisor.localize("addon.state.installed")
+                      : addon.available
+                        ? this.supervisor.localize("addon.state.not_installed")
+                        : this.supervisor.localize("addon.state.not_available")}
+                    .iconClass=${addon.installed
+                      ? addon.update_available
+                        ? "update"
+                        : "installed"
+                      : !addon.available
+                        ? "not_available"
+                        : ""}
+                    .iconImage=${atLeastVersion(
+                      this.hass.config.version,
+                      0,
+                      105
+                    ) && addon.icon
+                      ? `/api/hassio/addons/${addon.slug}/icon`
+                      : undefined}
+                    .showTopbar=${addon.installed || !addon.available}
+                    .topbarClass=${addon.installed
+                      ? addon.update_available
+                        ? "update"
+                        : "installed"
+                      : !addon.available
+                        ? "unavailable"
+                        : ""}
+                  ></hassio-card-content>
+                </div>
+              </ha-card>
+            `
+          )}
         </div>
-
-        ${addons.map(
-          (addon) => html`
-            <paper-card
-              .addon=${addon}
-              class=${addon.available ? "" : "not_available"}
-              @click=${this.addonTapped}
-            >
-              <div class="card-content">
-                <hassio-card-content
-                  .hass=${this.hass}
-                  .title=${addon.name}
-                  .description=${addon.description}
-                  .available=${addon.available}
-                  .icon=${this.computeIcon(addon)}
-                  .iconTitle=${this.computeIconTitle(addon)}
-                  .iconClass=${this.computeIconClass(addon)}
-                ></hassio-card-content>
-              </div>
-            </paper-card>
-          `
-        )}
       </div>
     `;
   }
 
-  private computeIcon(addon) {
-    return addon.installed && addon.installed !== addon.version
-      ? "hassio:arrow-up-bold-circle"
-      : "hassio:puzzle";
+  private _addonTapped(ev) {
+    navigate(`/hassio/addon/${ev.currentTarget.addon.slug}?store=true`);
   }
 
-  private computeIconTitle(addon) {
-    if (addon.installed) {
-      return addon.installed !== addon.version
-        ? "New version available"
-        : "Add-on is installed";
-    }
-    return addon.available
-      ? "Add-on is not installed"
-      : "Add-on is not available on your system";
-  }
-
-  private computeIconClass(addon) {
-    if (addon.installed) {
-      return addon.installed !== addon.version ? "update" : "installed";
-    }
-    return !addon.available ? "not_available" : "";
-  }
-
-  private addonTapped(ev) {
-    navigate(this, `/hassio/addon/${ev.currentTarget.addon.slug}`);
-  }
-
-  static get styles(): CSSResultArray {
+  static get styles(): CSSResultGroup {
     return [
       hassioStyle,
       css`
-        paper-card {
+        ha-card {
           cursor: pointer;
+          overflow: hidden;
         }
         .not_available {
           opacity: 0.6;
@@ -132,4 +142,8 @@ class HassioAddonRepositoryEl extends LitElement {
   }
 }
 
-customElements.define("hassio-addon-repository", HassioAddonRepositoryEl);
+declare global {
+  interface HTMLElementTagNameMap {
+    "hassio-addon-repository": HassioAddonRepositoryEl;
+  }
+}

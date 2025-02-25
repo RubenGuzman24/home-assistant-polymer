@@ -1,13 +1,32 @@
 /** Return an icon representing a cover state. */
-import { HassEntity } from "home-assistant-js-websocket";
-import domainIcon from "./domain_icon";
+import {
+  mdiArrowCollapseHorizontal,
+  mdiArrowDown,
+  mdiArrowExpandHorizontal,
+  mdiArrowUp,
+} from "@mdi/js";
+import type { HassEntity } from "home-assistant-js-websocket";
 
-export default function coverIcon(state: HassEntity): string {
-  const open = state.state !== "closed";
-  switch (state.attributes.device_class) {
-    case "garage":
-      return open ? "hass:garage-open" : "hass:garage";
+export const computeOpenIcon = (stateObj: HassEntity): string => {
+  switch (stateObj.attributes.device_class) {
+    case "awning":
+    case "door":
+    case "gate":
+    case "curtain":
+      return mdiArrowExpandHorizontal;
     default:
-      return domainIcon("cover", state.state);
+      return mdiArrowUp;
   }
-}
+};
+
+export const computeCloseIcon = (stateObj: HassEntity): string => {
+  switch (stateObj.attributes.device_class) {
+    case "awning":
+    case "door":
+    case "gate":
+    case "curtain":
+      return mdiArrowCollapseHorizontal;
+    default:
+      return mdiArrowDown;
+  }
+};

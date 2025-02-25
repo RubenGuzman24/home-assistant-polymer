@@ -1,8 +1,17 @@
 import { convertEntities } from "../../../../src/fake_data/entity";
-import { DemoConfig } from "../types";
+import type { DemoConfig } from "../types";
 
 export const demoEntitiesJimpower: DemoConfig["entities"] = () =>
   convertEntities({
+    "todo.shopping_list": {
+      entity_id: "todo.shopping_list",
+      state: "2",
+      attributes: {
+        supported_features: 15,
+        friendly_name: "Shopping List",
+        icon: "mdi:cart",
+      },
+    },
     "zone.powertec": {
       entity_id: "zone.powertec",
       state: "zoning",
@@ -653,7 +662,7 @@ export const demoEntitiesJimpower: DemoConfig["entities"] = () =>
       entity_id: "binary_sensor.smoke_sensor_158d0001b8ddc7",
       state: "off",
       attributes: {
-        Density: 0,
+        density: 0,
         battery_level: 59,
         friendly_name: "Downstairs Smoke Detector",
         device_class: "smoke",
@@ -663,7 +672,7 @@ export const demoEntitiesJimpower: DemoConfig["entities"] = () =>
       entity_id: "binary_sensor.smoke_sensor_158d0001b8deba",
       state: "off",
       attributes: {
-        Density: 0,
+        density: 0,
         battery_level: 65,
         friendly_name: "Upstairs Smoke Detector",
         device_class: "smoke",

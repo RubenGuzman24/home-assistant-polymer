@@ -1,66 +1,57 @@
-import { createCardElement } from "../common/create-card-element";
+import { customElement } from "lit/decorators";
+import { fireEvent } from "../../../common/dom/fire_event";
+import type { LovelaceCardConfig } from "../../../data/lovelace/config/card";
 import { computeCardSize } from "../common/compute-card-size";
-import {
-  checkConditionsMet,
-  validateConditionalConfig,
-} from "../../lovelace/common/validate-condition";
-import { HomeAssistant } from "../../../types";
-import { LovelaceCard } from "../types";
-import { ConditionalCardConfig } from "./types";
+import { HuiConditionalBase } from "../components/hui-conditional-base";
+import type { LovelaceCard, LovelaceCardEditor } from "../types";
+import type { ConditionalCardConfig } from "./types";
 
-class HuiConditionalCard extends HTMLElement implements LovelaceCard {
-  private _hass?: HomeAssistant;
-  private _config?: ConditionalCardConfig;
-  private _card?: LovelaceCard;
-
-  public setConfig(config) {
-    if (
-      !config.card ||
-      !config.conditions ||
-      !Array.isArray(config.conditions) ||
-      !validateConditionalConfig(config.conditions)
-    ) {
-      throw new Error("Error in card configuration.");
-    }
-
-    if (this._card && this._card.parentElement) {
-      this.removeChild(this._card);
-    }
-
-    this._config = config;
-    this._card = createCardElement(config.card);
-
-    this.update();
+@customElement("hui-conditional-card")
+class HuiConditionalCard extends HuiConditionalBase implements LovelaceCard {
+  public static async getConfigElement(): Promise<LovelaceCardEditor> {
+    await import("../editor/config-elements/hui-conditional-card-editor");
+    return document.createElement("hui-conditional-card-editor");
   }
 
-  set hass(hass: HomeAssistant) {
-    this._hass = hass;
-
-    this.update();
+  public static getStubConfig(): ConditionalCardConfig {
+    return {
+      type: "conditional",
+      conditions: [],
+      // @ts-ignore
+      card: {},
+    };
   }
 
-  public getCardSize() {
-    return computeCardSize(this._card!);
+  public setConfig(config: ConditionalCardConfig): void {
+    this.validateConfig(config);
+
+    if (!config.card) {
+      throw new Error("No card configured");
+    }
+
+    this._element = this._createCardElement(config.card);
   }
 
-  private update() {
-    if (!this._card || !this._hass) {
-      return;
-    }
+  public getCardSize(): Promise<number> | number {
+    return computeCardSize(this._element as LovelaceCard);
+  }
 
-    const visible =
-      this._config && checkConditionsMet(this._config.conditions, this._hass);
+  private _createCardElement(cardConfig: LovelaceCardConfig) {
+    const element = document.createElement("hui-card");
+    element.hass = this.hass;
+    element.preview = this.preview;
+    element.config = cardConfig;
+    element.load();
+    return element;
+  }
 
-    if (visible) {
-      this._card.hass = this._hass;
-      if (!this._card.parentElement) {
-        this.appendChild(this._card);
-      }
-    } else if (this._card.parentElement) {
-      this.removeChild(this._card);
+  protected setVisibility(conditionMet: boolean): void {
+    const visible = this.preview || conditionMet;
+    const previouslyHidden = this.hidden;
+    super.setVisibility(conditionMet);
+    if (previouslyHidden !== this.hidden) {
+      fireEvent(this, "card-visibility-changed", { value: visible });
     }
-    // This will hide the complete card so it won't get styled by parent
-    this.style.setProperty("display", visible ? "" : "none");
   }
 }
 
@@ -69,5 +60,3 @@ declare global {
     "hui-conditional-card": HuiConditionalCard;
   }
 }
-
-customElements.define("hui-conditional-card", HuiConditionalCard);

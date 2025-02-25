@@ -1,169 +1,195 @@
-import "@polymer/paper-input/paper-input";
 import "@material/mwc-button";
-import {
-  LitElement,
-  CSSResult,
-  css,
-  html,
-  PropertyValues,
-  property,
-  customElement,
-  TemplateResult,
-} from "lit-element";
 import { genClientId } from "home-assistant-js-websocket";
-import { onboardUserStep } from "../data/onboarding";
-import { PolymerChangedEvent } from "../polymer-types";
-import { LocalizeFunc } from "../common/translations/localize";
+import type { CSSResultGroup, PropertyValues, TemplateResult } from "lit";
+import { html, LitElement } from "lit";
+import { customElement, property, query, state } from "lit/decorators";
 import { fireEvent } from "../common/dom/fire_event";
+import type { LocalizeFunc } from "../common/translations/localize";
+import "../components/ha-form/ha-form";
+import type { HaForm } from "../components/ha-form/ha-form";
+import type {
+  HaFormDataContainer,
+  HaFormSchema,
+} from "../components/ha-form/types";
+import { onboardUserStep } from "../data/onboarding";
+import type { ValueChangedEvent } from "../types";
+import { onBoardingStyles } from "./styles";
+import { debounce } from "../common/util/debounce";
+
+const CHECK_USERNAME_REGEX = /\s|[A-Z]/;
+
+const CREATE_USER_SCHEMA: HaFormSchema[] = [
+  {
+    name: "name",
+    required: true,
+    selector: { text: { autocomplete: "name" } },
+  },
+  {
+    name: "username",
+    required: true,
+    selector: { text: { autocomplete: "username" } },
+  },
+  {
+    name: "password",
+    required: true,
+    selector: { text: { type: "password", autocomplete: "new-password" } },
+  },
+  {
+    name: "password_confirm",
+    required: true,
+    selector: { text: { type: "password", autocomplete: "new-password" } },
+  },
+];
 
 @customElement("onboarding-create-user")
 class OnboardingCreateUser extends LitElement {
-  @property() public localize!: LocalizeFunc;
+  @property({ attribute: false }) public localize!: LocalizeFunc;
+
   @property() public language!: string;
 
-  @property() private _name = "";
-  @property() private _username = "";
-  @property() private _password = "";
-  @property() private _passwordConfirm = "";
-  @property() private _loading = false;
-  @property() private _errorMsg?: string = undefined;
+  @state() private _loading = false;
 
-  protected render(): TemplateResult | void {
+  @state() private _errorMsg?: string;
+
+  @state() private _formError: Record<string, string> = {};
+
+  @state() private _newUser: HaFormDataContainer = {};
+
+  @query("ha-form", true) private _form?: HaForm;
+
+  protected render(): TemplateResult {
     return html`
-    <p>
-      ${this.localize("ui.panel.page-onboarding.intro")}
-    </p>
+      <h1>${this.localize("ui.panel.page-onboarding.user.header")}</h1>
+      <p>${this.localize("ui.panel.page-onboarding.user.intro")}</p>
 
-    <p>
-      ${this.localize("ui.panel.page-onboarding.user.intro")}
-    </p>
+      ${this._errorMsg
+        ? html`<ha-alert alert-type="error">${this._errorMsg}</ha-alert>`
+        : ""}
 
-    ${
-      this._errorMsg
-        ? html`
-            <p class="error">
-              ${this.localize(
-                `ui.panel.page-onboarding.user.error.${this._errorMsg}`
-              ) || this._errorMsg}
-            </p>
-          `
-        : ""
-    }
-
-    <form>
-      <paper-input
-        name="name"
-        label="${this.localize("ui.panel.page-onboarding.user.data.name")}"
-        .value=${this._name}
+      <ha-form
+        .computeLabel=${this._computeLabel(this.localize)}
+        .computeHelper=${this._computeHelper(this.localize)}
+        .data=${this._newUser}
+        .disabled=${this._loading}
+        .error=${this._formError}
+        .schema=${CREATE_USER_SCHEMA}
         @value-changed=${this._handleValueChanged}
-        required
-        auto-validate
-        autocapitalize='on'
-        .errorMessage="${this.localize(
-          "ui.panel.page-onboarding.user.required_field"
-        )}"
-        @blur=${this._maybePopulateUsername}
-      ></paper-input>
-
-      <paper-input
-        name="username"
-        label="${this.localize("ui.panel.page-onboarding.user.data.username")}"
-        value=${this._username}
-        @value-changed=${this._handleValueChanged}
-        required
-        auto-validate
-        autocapitalize='none'
-        .errorMessage="${this.localize(
-          "ui.panel.page-onboarding.user.required_field"
-        )}"
-      ></paper-input>
-
-      <paper-input
-        name="password"
-        label="${this.localize("ui.panel.page-onboarding.user.data.password")}"
-        value=${this._password}
-        @value-changed=${this._handleValueChanged}
-        required
-        type='password'
-        auto-validate
-        .errorMessage="${this.localize(
-          "ui.panel.page-onboarding.user.required_field"
-        )}"
-      ></paper-input>
-
-      <paper-input
-        name="passwordConfirm"
-        label="${this.localize(
-          "ui.panel.page-onboarding.user.data.password_confirm"
-        )}"
-        value=${this._passwordConfirm}
-        @value-changed=${this._handleValueChanged}
-        required
-        type='password'
-        .invalid=${this._password !== "" &&
-          this._passwordConfirm !== "" &&
-          this._passwordConfirm !== this._password}
-        .errorMessage="${this.localize(
-          "ui.panel.page-onboarding.user.error.password_not_match"
-        )}"
-      ></paper-input>
-
-      <p class="action">
+      ></ha-form>
+      <div class="footer">
         <mwc-button
-          raised
+          unelevated
           @click=${this._submitForm}
-          .disabled=${this._loading}
+          .disabled=${this._loading ||
+          !this._newUser.name ||
+          !this._newUser.username ||
+          !this._newUser.password ||
+          !this._newUser.password_confirm ||
+          this._newUser.password !== this._newUser.password_confirm}
         >
           ${this.localize("ui.panel.page-onboarding.user.create_account")}
         </mwc-button>
-      </p>
-    </div>
-  </form>
-`;
+      </div>
+    `;
   }
 
   protected firstUpdated(changedProps: PropertyValues) {
     super.firstUpdated(changedProps);
-    setTimeout(
-      () => this.shadowRoot!.querySelector("paper-input")!.focus(),
-      100
-    );
+    setTimeout(() => this._form?.focus(), 100);
     this.addEventListener("keypress", (ev) => {
-      if (ev.keyCode === 13) {
+      if (
+        ev.key === "Enter" &&
+        this._newUser.name &&
+        this._newUser.username &&
+        this._newUser.password &&
+        this._newUser.password_confirm &&
+        this._newUser.password === this._newUser.password_confirm
+      ) {
         this._submitForm(ev);
       }
     });
   }
 
-  private _handleValueChanged(ev: PolymerChangedEvent<string>): void {
-    const name = (ev.target as any).name;
-    this[`_${name}`] = ev.detail.value;
+  private _computeLabel(localize) {
+    return (schema: HaFormSchema) =>
+      localize(`ui.panel.page-onboarding.user.data.${schema.name}`);
+  }
+
+  private _computeHelper(localize) {
+    return (schema: HaFormSchema) =>
+      localize(`ui.panel.page-onboarding.user.helper.${schema.name}`);
+  }
+
+  private _handleValueChanged(
+    ev: ValueChangedEvent<HaFormDataContainer>
+  ): void {
+    const nameChanged = ev.detail.value.name !== this._newUser.name;
+    const usernameChanged = ev.detail.value.username !== this._newUser.username;
+    const passwordChanged =
+      ev.detail.value.password !== this._newUser.password ||
+      ev.detail.value.password_confirm !== this._newUser.password_confirm;
+    this._newUser = ev.detail.value;
+    if (nameChanged) {
+      this._maybePopulateUsername();
+    }
+    if (passwordChanged) {
+      if (this._formError.password_confirm) {
+        this._checkPasswordMatch();
+      } else {
+        this._debouncedCheckPasswordMatch();
+      }
+    }
+    if (usernameChanged) {
+      this._checkUsername();
+    }
+  }
+
+  private _debouncedCheckPasswordMatch = debounce(
+    () => this._checkPasswordMatch(),
+    500
+  );
+
+  private _checkPasswordMatch(): void {
+    const old = this._formError.password_confirm;
+    this._formError.password_confirm =
+      this._newUser.password_confirm &&
+      this._newUser.password !== this._newUser.password_confirm
+        ? this.localize(
+            "ui.panel.page-onboarding.user.error.password_not_match"
+          )
+        : "";
+    if (old !== this._formError.password_confirm) {
+      this.requestUpdate("_formError");
+    }
   }
 
   private _maybePopulateUsername(): void {
-    if (this._username) {
+    if (!this._newUser.name || this._newUser.name === this._newUser.username) {
       return;
     }
 
-    const parts = this._name.split(" ");
-
+    const parts = String(this._newUser.name).split(" ");
     if (parts.length) {
-      this._username = parts[0].toLowerCase();
+      this._newUser.username = parts[0].toLowerCase();
+      this._checkUsername();
+    }
+  }
+
+  private _checkUsername(): void {
+    const old = this._formError.username;
+    if (CHECK_USERNAME_REGEX.test(this._newUser.username as string)) {
+      this._formError.username = this.localize(
+        "ui.panel.page-onboarding.user.error.username_not_normalized"
+      );
+    } else {
+      this._formError.username = "";
+    }
+    if (old !== this._formError.username) {
+      this.requestUpdate("_formError");
     }
   }
 
   private async _submitForm(ev): Promise<void> {
     ev.preventDefault();
-    if (!this._name || !this._username || !this._password) {
-      this._errorMsg = "required_fields";
-      return;
-    }
-
-    if (this._password !== this._passwordConfirm) {
-      this._errorMsg = "password_not_match";
-      return;
-    }
-
     this._loading = true;
     this._errorMsg = "";
 
@@ -172,9 +198,9 @@ class OnboardingCreateUser extends LitElement {
 
       const result = await onboardUserStep({
         client_id: clientId,
-        name: this._name,
-        username: this._username,
-        password: this._password,
+        name: String(this._newUser.name),
+        username: String(this._newUser.username),
+        password: String(this._newUser.password),
         language: this.language,
       });
 
@@ -182,25 +208,16 @@ class OnboardingCreateUser extends LitElement {
         type: "user",
         result,
       });
-    } catch (err) {
-      // tslint:disable-next-line
+    } catch (err: any) {
+      // eslint-disable-next-line
       console.error(err);
       this._loading = false;
       this._errorMsg = err.body.message;
     }
   }
 
-  static get styles(): CSSResult {
-    return css`
-      .error {
-        color: red;
-      }
-
-      .action {
-        margin: 32px 0;
-        text-align: center;
-      }
-    `;
+  static get styles(): CSSResultGroup {
+    return onBoardingStyles;
   }
 }
 

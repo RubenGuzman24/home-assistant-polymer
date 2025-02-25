@@ -1,46 +1,32 @@
-import {
-  html,
-  LitElement,
-  PropertyDeclarations,
-  PropertyValues,
-} from "lit-element";
-import "@polymer/paper-toggle-button/paper-toggle-button";
-import "@polymer/paper-item/paper-item";
-import "@polymer/paper-item/paper-item-body";
-import "@polymer/paper-spinner/paper-spinner";
+import type { CSSResultGroup, PropertyValues } from "lit";
+import { css, html, LitElement } from "lit";
+import { customElement, property, state } from "lit/decorators";
+import { isComponentLoaded } from "../../../../common/config/is_component_loaded";
 import "../../../../components/ha-card";
-
-import { HomeAssistant, WebhookError } from "../../../../types";
-import { Webhook, fetchWebhooks } from "../../../../data/webhook";
-import {
-  createCloudhook,
-  deleteCloudhook,
-  CloudWebhook,
-  CloudStatusLoggedIn,
-} from "../../../../data/cloud";
+import "../../../../components/ha-circular-progress";
+import "../../../../components/ha-settings-row";
+import "../../../../components/ha-switch";
+import type { CloudStatusLoggedIn, CloudWebhook } from "../../../../data/cloud";
+import { createCloudhook, deleteCloudhook } from "../../../../data/cloud";
+import type { Webhook, WebhookError } from "../../../../data/webhook";
+import { fetchWebhooks } from "../../../../data/webhook";
+import { haStyle } from "../../../../resources/styles";
+import type { HomeAssistant } from "../../../../types";
 import { showManageCloudhookDialog } from "../dialog-manage-cloudhook/show-dialog-manage-cloudhook";
 
+@customElement("cloud-webhooks")
 export class CloudWebhooks extends LitElement {
-  public hass?: HomeAssistant;
-  public cloudStatus?: CloudStatusLoggedIn;
-  private _cloudHooks?: { [webhookId: string]: CloudWebhook };
-  private _localHooks?: Webhook[];
-  private _progress: string[];
+  @property({ attribute: false }) public hass?: HomeAssistant;
 
-  static get properties(): PropertyDeclarations {
-    return {
-      hass: {},
-      cloudStatus: {},
-      _cloudHooks: {},
-      _localHooks: {},
-      _progress: {},
-    };
-  }
+  @property({ attribute: false }) public cloudStatus?: CloudStatusLoggedIn;
 
-  constructor() {
-    super();
-    this._progress = [];
-  }
+  @property({ type: Boolean }) public narrow = false;
+
+  @state() private _cloudHooks?: Record<string, CloudWebhook>;
+
+  @state() private _localHooks?: Webhook[];
+
+  @state() private _progress: string[] = [];
 
   public connectedCallback() {
     super.connectedCallback();
@@ -49,17 +35,86 @@ export class CloudWebhooks extends LitElement {
 
   protected render() {
     return html`
-      ${this.renderStyle()}
-      <ha-card header="Webhooks">
+      <ha-card
+        outlined
+        header=${this.hass!.localize(
+          "ui.panel.config.cloud.account.webhooks.title"
+        )}
+      >
         <div class="card-content">
-          Anything that is configured to be triggered by a webhook can be given
-          a publicly accessible URL to allow you to send data back to Home
-          Assistant from anywhere, without exposing your instance to the
-          internet. ${this._renderBody()}
-
+          ${this.hass!.localize("ui.panel.config.cloud.account.webhooks.info")}
+          ${!this.cloudStatus ||
+          !this._localHooks ||
+          !this._cloudHooks ||
+          !this.hass
+            ? html`
+                <div class="body-text">
+                  ${this.hass!.localize(
+                    "ui.panel.config.cloud.account.webhooks.loading"
+                  )}
+                </div>
+              `
+            : this._localHooks.length === 0
+              ? html`
+                  <div class="body-text">
+                    ${this.hass.localize(
+                      "ui.panel.config.cloud.account.webhooks.no_hooks_yet"
+                    )}
+                    <a href="/config/integrations"
+                      >${this.hass.localize(
+                        "ui.panel.config.cloud.account.webhooks.no_hooks_yet_link_integration"
+                      )}
+                    </a>
+                    ${this.hass.localize(
+                      "ui.panel.config.cloud.account.webhooks.no_hooks_yet2"
+                    )}
+                    <a href="/config/automation/edit/new"
+                      >${this.hass.localize(
+                        "ui.panel.config.cloud.account.webhooks.no_hooks_yet_link_automation"
+                      )}</a
+                    >.
+                  </div>
+                `
+              : this._localHooks.map(
+                  (entry) => html`
+                    <ha-settings-row .narrow=${this.narrow} .entry=${entry}>
+                      <span slot="heading">
+                        ${entry.name}
+                        ${entry.domain !== entry.name.toLowerCase()
+                          ? ` (${entry.domain})`
+                          : ""}
+                      </span>
+                      <span slot="description">${entry.webhook_id}</span>
+                      ${this._progress.includes(entry.webhook_id)
+                        ? html`
+                            <div class="progress">
+                              <ha-circular-progress
+                                indeterminate
+                              ></ha-circular-progress>
+                            </div>
+                          `
+                        : this._cloudHooks![entry.webhook_id]
+                          ? html`
+                              <mwc-button @click=${this._handleManageButton}>
+                                ${this.hass!.localize(
+                                  "ui.panel.config.cloud.account.webhooks.manage"
+                                )}
+                              </mwc-button>
+                            `
+                          : html`<ha-switch @click=${this._enableWebhook}>
+                            </ha-switch>`}
+                    </ha-settings-row>
+                  `
+                )}
           <div class="footer">
-            <a href="https://www.nabucasa.com/config/webhooks" target="_blank">
-              Learn more about creating webhook-powered automations.
+            <a
+              href="https://www.nabucasa.com/config/webhooks"
+              target="_blank"
+              rel="noreferrer"
+            >
+              ${this.hass!.localize(
+                "ui.panel.config.cloud.account.webhooks.link_learn_more"
+              )}
             </a>
           </div>
         </div>
@@ -72,57 +127,6 @@ export class CloudWebhooks extends LitElement {
     if (changedProps.has("cloudStatus") && this.cloudStatus) {
       this._cloudHooks = this.cloudStatus.prefs.cloudhooks || {};
     }
-  }
-
-  private _renderBody() {
-    if (!this.cloudStatus || !this._localHooks || !this._cloudHooks) {
-      return html`
-        <div class="body-text">Loading…</div>
-      `;
-    }
-
-    if (this._localHooks.length === 0) {
-      return html`
-        <div class="body-text">
-          Looks like you have no webhooks yet. Get started by configuring a
-          <a href="/config/integrations">webhook-based integration</a> or by
-          creating a <a href="/config/automation/new">webhook automation</a>.
-        </div>
-      `;
-    }
-
-    return this._localHooks.map(
-      (entry) => html`
-        <div class="webhook" .entry="${entry}">
-          <paper-item-body two-line>
-            <div>
-              ${entry.name}
-              ${entry.domain === entry.name.toLowerCase()
-                ? ""
-                : ` (${entry.domain})`}
-            </div>
-            <div secondary>${entry.webhook_id}</div>
-          </paper-item-body>
-          ${this._progress.includes(entry.webhook_id)
-            ? html`
-                <div class="progress">
-                  <paper-spinner active></paper-spinner>
-                </div>
-              `
-            : this._cloudHooks![entry.webhook_id]
-            ? html`
-                <mwc-button @click="${this._handleManageButton}">
-                  Manage
-                </mwc-button>
-              `
-            : html`
-                <paper-toggle-button
-                  @click="${this._enableWebhook}"
-                ></paper-toggle-button>
-              `}
-        </div>
-      `
-    );
   }
 
   private _showDialog(webhookId: string) {
@@ -143,13 +147,13 @@ export class CloudWebhooks extends LitElement {
   }
 
   private async _enableWebhook(ev: MouseEvent) {
-    const entry = (ev.currentTarget as any).parentElement.entry;
+    const entry = (ev.currentTarget as any).parentElement!.entry as Webhook;
     this._progress = [...this._progress, entry.webhook_id];
     let updatedWebhook;
 
     try {
       updatedWebhook = await createCloudhook(this.hass!, entry.webhook_id);
-    } catch (err) {
+    } catch (err: any) {
       alert((err as WebhookError).message);
       return;
     } finally {
@@ -171,8 +175,12 @@ export class CloudWebhooks extends LitElement {
     this._progress = [...this._progress, webhookId];
     try {
       await deleteCloudhook(this.hass!, webhookId!);
-    } catch (err) {
-      alert(`Failed to disable webhook: ${(err as WebhookError).message}`);
+    } catch (err: any) {
+      alert(
+        `${this.hass!.localize(
+          "ui.panel.config.cloud.account.webhooks.disable_hook_error_msg"
+        )} ${(err as WebhookError).message}`
+      );
       return;
     } finally {
       this._progress = this._progress.filter((wid) => wid !== webhookId);
@@ -184,14 +192,24 @@ export class CloudWebhooks extends LitElement {
   }
 
   private async _fetchData() {
-    this._localHooks = this.hass!.config.components.includes("webhook")
-      ? await fetchWebhooks(this.hass!)
-      : [];
+    if (!isComponentLoaded(this.hass!, "webhook")) {
+      this._localHooks = [];
+      return;
+    }
+    const hooks = await fetchWebhooks(this.hass!);
+    this._localHooks = hooks.filter(
+      (hook) =>
+        // Only hooks that are not limited to local requests are relevant
+        !hook.local_only &&
+        // Deleted webhooks -> nobody cares :)
+        (hook.domain !== "mobile_app" || hook.name !== "Deleted Webhook")
+    );
   }
 
-  private renderStyle() {
-    return html`
-      <style>
+  static get styles(): CSSResultGroup {
+    return [
+      haStyle,
+      css`
         .body-text {
           padding: 8px 0;
         }
@@ -201,6 +219,8 @@ export class CloudWebhooks extends LitElement {
         }
         .progress {
           margin-right: 16px;
+          margin-inline-end: 16px;
+          margin-inline-start: initial;
           display: flex;
           flex-direction: column;
           justify-content: center;
@@ -212,8 +232,11 @@ export class CloudWebhooks extends LitElement {
         .footer a {
           color: var(--primary-color);
         }
-      </style>
-    `;
+        ha-settings-row {
+          padding: 0;
+        }
+      `,
+    ];
   }
 }
 
@@ -222,5 +245,3 @@ declare global {
     "cloud-webhooks": CloudWebhooks;
   }
 }
-
-customElements.define("cloud-webhooks", CloudWebhooks);

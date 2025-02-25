@@ -1,78 +1,34 @@
-import { customElement, PropertyValues, property } from "lit-element";
-import { PolymerElement } from "@polymer/polymer";
-import "@polymer/paper-icon-button";
-
-import "../../src/resources/ha-style";
-import applyThemesOnElement from "../../src/common/dom/apply_themes_on_element";
+import type { PropertyValues } from "lit";
+import { html } from "lit";
+import { customElement, property } from "lit/decorators";
+import { atLeastVersion } from "../../src/common/config/version";
+import { applyThemesOnElement } from "../../src/common/dom/apply_themes_on_element";
 import { fireEvent } from "../../src/common/dom/fire_event";
-import {
-  HassRouterPage,
-  RouterOptions,
-} from "../../src/layouts/hass-router-page";
-import { HomeAssistant } from "../../src/types";
-import {
-  fetchHassioSupervisorInfo,
-  fetchHassioHostInfo,
-  fetchHassioHomeAssistantInfo,
-  HassioSupervisorInfo,
-  HassioHostInfo,
-  HassioHomeAssistantInfo,
-  fetchHassioAddonInfo,
-  createHassioSession,
-  HassioPanelInfo,
-} from "../../src/data/hassio";
+import { mainWindow } from "../../src/common/dom/get_main_window";
+import { isNavigationClick } from "../../src/common/dom/is-navigation-click";
+import { navigate } from "../../src/common/navigate";
+import type { HassioPanelInfo } from "../../src/data/hassio/supervisor";
+import type { Supervisor } from "../../src/data/supervisor/supervisor";
 import { makeDialogManager } from "../../src/dialogs/make-dialog-manager";
-import { ProvideHassLitMixin } from "../../src/mixins/provide-hass-lit-mixin";
-// Don't codesplit it, that way the dashboard always loads fast.
-import "./hassio-pages-with-tabs";
-
-// The register callback of the IronA11yKeysBehavior inside paper-icon-button
-// is not called, causing _keyBindings to be uninitiliazed for paper-icon-button,
-// causing an exception when added to DOM. When transpiled to ES5, this will
-// break the build.
-customElements.get("paper-icon-button").prototype._keyBindings = {};
+import type { HomeAssistant } from "../../src/types";
+import "./hassio-router";
+import { SupervisorBaseElement } from "./supervisor-base-element";
 
 @customElement("hassio-main")
-class HassioMain extends ProvideHassLitMixin(HassRouterPage) {
-  @property() public hass!: HomeAssistant;
-  @property() public panel!: HassioPanelInfo;
-  @property() public narrow!: boolean;
+export class HassioMain extends SupervisorBaseElement {
+  @property({ attribute: false }) public hass!: HomeAssistant;
 
-  protected routerOptions: RouterOptions = {
-    // Hass.io has a page with tabs, so we route all non-matching routes to it.
-    defaultPage: "dashboard",
-    initialLoad: () => this._fetchData(),
-    showLoading: true,
-    routes: {
-      dashboard: {
-        tag: "hassio-pages-with-tabs",
-        cache: true,
-      },
-      snapshots: "dashboard",
-      store: "dashboard",
-      system: "dashboard",
-      addon: {
-        tag: "hassio-addon-view",
-        load: () =>
-          import(/* webpackChunkName: "hassio-addon-view" */ "./addon-view/hassio-addon-view"),
-      },
-      ingress: {
-        tag: "hassio-ingress-view",
-        load: () =>
-          import(/* webpackChunkName: "hassio-ingress-view" */ "./ingress-view/hassio-ingress-view"),
-      },
-    },
-  };
+  @property({ attribute: false }) public supervisor!: Supervisor;
 
-  @property() private _supervisorInfo: HassioSupervisorInfo;
-  @property() private _hostInfo: HassioHostInfo;
-  @property() private _hassInfo: HassioHomeAssistantInfo;
+  @property({ attribute: false }) public panel!: HassioPanelInfo;
+
+  @property({ type: Boolean }) public narrow = false;
 
   protected firstUpdated(changedProps: PropertyValues) {
     super.firstUpdated(changedProps);
 
-    applyThemesOnElement(this, this.hass.themes, this.hass.selectedTheme, true);
-    this.addEventListener("hass-api-called", (ev) => this._apiCalled(ev));
+    this._applyTheme();
+
     // Paulus - March 17, 2019
     // We went to a single hass-toggle-menu event in HA 0.90. However, the
     // supervisor UI can also run under older versions of Home Assistant.
@@ -90,94 +46,96 @@ class HassioMain extends ProvideHassLitMixin(HassRouterPage) {
     // We changed the navigate event to fire directly on the window, as that's
     // where we are listening for it. However, the older panel_custom will
     // listen on this element for navigation events, so we need to forward them.
-    window.addEventListener("location-changed", (ev) =>
+
+    // Joakim - April 26, 2021
+    // Due to changes in behavior in Google Chrome, we changed navigate to listen on the top element
+    mainWindow.addEventListener("location-changed", (ev) =>
       // @ts-ignore
       fireEvent(this, ev.type, ev.detail, {
         bubbles: false,
       })
     );
 
-    makeDialogManager(this, document.body);
-  }
-
-  protected updatePageEl(el) {
-    // the tabs page does its own routing so needs full route.
-    const route =
-      el.nodeName === "HASSIO-PAGES-WITH-TABS" ? this.route : this.routeTail;
-
-    if ("setProperties" in el) {
-      // As long as we have Polymer pages
-      (el as PolymerElement).setProperties({
-        hass: this.hass,
-        narrow: this.narrow,
-        supervisorInfo: this._supervisorInfo,
-        hostInfo: this._hostInfo,
-        hassInfo: this._hassInfo,
-        route,
-      });
-    } else {
-      el.hass = this.hass;
-      el.narrow = this.narrow;
-      el.supervisorInfo = this._supervisorInfo;
-      el.hostInfo = this._hostInfo;
-      el.hassInfo = this._hassInfo;
-      el.route = route;
-    }
-  }
-
-  private async _fetchData() {
-    if (this.panel.config && this.panel.config.ingress) {
-      await this._redirectIngress(this.panel.config.ingress);
-      return;
-    }
-
-    const [supervisorInfo, hostInfo, hassInfo] = await Promise.all([
-      fetchHassioSupervisorInfo(this.hass),
-      fetchHassioHostInfo(this.hass),
-      fetchHassioHomeAssistantInfo(this.hass),
-    ]);
-    this._supervisorInfo = supervisorInfo;
-    this._hostInfo = hostInfo;
-    this._hassInfo = hassInfo;
-  }
-
-  private async _redirectIngress(addonSlug: string) {
-    try {
-      const [addon] = await Promise.all([
-        fetchHassioAddonInfo(this.hass, addonSlug).catch(() => {
-          throw new Error("Failed to fetch add-on info");
-        }),
-        createHassioSession(this.hass).catch(() => {
-          throw new Error("Failed to create an ingress session");
-        }),
-      ]);
-      if (!addon.ingress_url) {
-        throw new Error("Add-on does not support Ingress");
+    // Paulus - May 17, 2021
+    // Convert the <a> tags to native nav in Home Assistant < 2021.6
+    document.body.addEventListener("click", (ev) => {
+      const href = isNavigationClick(ev);
+      if (href) {
+        navigate(href);
       }
-      location.assign(addon.ingress_url);
-      // await a promise that doesn't resolve, so we show the loading screen
-      // while we load the next page.
-      await new Promise(() => undefined);
-    } catch (err) {
-      alert(`Unable to open ingress connection `);
+    });
+
+    // Forward haptic events to parent window.
+    window.addEventListener("haptic", (ev) => {
+      // @ts-ignore
+      fireEvent(window.parent, ev.type, ev.detail, {
+        bubbles: false,
+      });
+    });
+
+    // Forward keydown events to the main window for quickbar access
+    document.body.addEventListener("keydown", (ev: KeyboardEvent) => {
+      if (ev.altKey || ev.ctrlKey || ev.shiftKey || ev.metaKey) {
+        // Ignore if modifier keys are pressed
+        return;
+      }
+      // @ts-ignore
+      fireEvent(mainWindow, "hass-quick-bar-trigger", ev, {
+        bubbles: false,
+      });
+    });
+
+    makeDialogManager(this, this.shadowRoot!);
+  }
+
+  protected updated(changedProps: PropertyValues) {
+    super.updated(changedProps);
+    const oldHass = changedProps.get("hass") as HomeAssistant | undefined;
+    if (!oldHass) {
+      return;
+    }
+    if (oldHass.themes !== this.hass.themes) {
+      this._applyTheme();
     }
   }
 
-  private _apiCalled(ev) {
-    if (!ev.detail.success) {
-      return;
+  protected render() {
+    return html`
+      <hassio-router
+        .hass=${this.hass}
+        .supervisor=${this.supervisor}
+        .route=${this.route}
+        .panel=${this.panel}
+        .narrow=${this.narrow}
+      ></hassio-router>
+    `;
+  }
+
+  private _applyTheme() {
+    let themeName: string;
+    let themeSettings: Partial<HomeAssistant["selectedTheme"]> | undefined;
+
+    if (atLeastVersion(this.hass.config.version, 0, 114)) {
+      themeName =
+        this.hass.selectedTheme?.theme ||
+        (this.hass.themes.darkMode && this.hass.themes.default_dark_theme
+          ? this.hass.themes.default_dark_theme!
+          : this.hass.themes.default_theme);
+
+      themeSettings = this.hass.selectedTheme;
+    } else {
+      themeName =
+        (this.hass.selectedTheme as unknown as string) ||
+        this.hass.themes.default_theme;
     }
 
-    let tries = 1;
-
-    const tryUpdate = () => {
-      this._fetchData().catch(() => {
-        tries += 1;
-        setTimeout(tryUpdate, Math.min(tries, 5) * 1000);
-      });
-    };
-
-    tryUpdate();
+    applyThemesOnElement(
+      this.parentElement,
+      this.hass.themes,
+      themeName,
+      themeSettings,
+      true
+    );
   }
 }
 
